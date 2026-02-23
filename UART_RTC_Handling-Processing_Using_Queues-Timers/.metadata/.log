@@ -1,0 +1,312 @@
+!SESSION 2026-02-21 19:28:13.433 -----------------------------------------------
+eclipse.buildId=Version 1.14.0
+java.version=17.0.8.1
+java.vendor=Eclipse Adoptium
+BootLoader constants: OS=win32, ARCH=x86_64, WS=win32, NL=en_IN
+Command-line arguments:  -os win32 -ws win32 -arch x86_64
+
+!ENTRY com.st.stm32cube.ide.mcu.informationcenter 4 4 2026-02-21 19:28:30.221
+!MESSAGE CubeMX plugin appears to be active, Log4j initialization might be too late.
+
+!ENTRY com.st.stm32cube.ide.mcu.informationcenter 1 1 2026-02-21 19:28:30.222
+!MESSAGE Log4j2 initialized with config file D:\RTOS_udemy\UART_RTC_Handling-Processing_Using_Queues-Timers\.metadata\.log4j2.xml
+
+!ENTRY com.st.stm32cube.ide.mcu.ide 1 1 2026-02-21 19:28:34.833
+!MESSAGE Started RMI Server, listening on port 41337
+
+!ENTRY org.eclipse.ui.workbench 4 2 2026-02-21 19:28:40.569
+!MESSAGE Problems occurred when invoking code from plug-in: "org.eclipse.ui.workbench".
+!STACK 0
+java.lang.IllegalStateException: Failed to receive the response.
+	at com.teamdev.jxbrowser.internal.rpc.transport.CommonThreadResponseConsumer.await(CommonThreadResponseConsumer.java:55)
+	at com.teamdev.jxbrowser.internal.rpc.transport.CommonThreadCallExecutor.execute(CommonThreadCallExecutor.java:29)
+	at com.teamdev.jxbrowser.internal.rpc.ServiceConnectionImpl.invoke(ServiceConnectionImpl.java:213)
+	at com.teamdev.jxbrowser.navigation.internal.NavigationImpl.loadAndWait(NavigationImpl.java:227)
+	at com.teamdev.jxbrowser.navigation.internal.NavigationImpl.loadUrlAndWait(NavigationImpl.java:104)
+	at com.teamdev.jxbrowser.navigation.internal.NavigationImpl.loadUrlAndWait(NavigationImpl.java:91)
+	at com.teamdev.jxbrowser.navigation.internal.NavigationImpl.loadUrlAndWait(NavigationImpl.java:83)
+	at com.teamdev.jxbrowser.browser.internal.BrowserImpl.initializeMainFrame(BrowserImpl.java:401)
+	at com.teamdev.jxbrowser.profile.internal.ProfileImpl.newBrowser(ProfileImpl.java:150)
+	at com.st.microxplorer.plugins.userauth.WebApp.<init>(WebApp.java:166)
+	at com.st.microxplorer.plugins.userauth.WebApp.getInstance(WebApp.java:715)
+	at com.st.microxplorer.plugins.userauth.UserAuth.getBrowserView(UserAuth.java:406)
+	at com.st.microxplorer.plugins.userauth.UserAuth.getSpecificTask(UserAuth.java:255)
+	at com.st.stm32cube.common.mx.userauth.UserAuthAdapter.addListener(UserAuthAdapter.java:51)
+	at com.st.stm32cube.ide.mcu.userauth.UserAuthStartup.earlyStartup(UserAuthStartup.java:42)
+	at org.eclipse.ui.internal.EarlyStartupRunnable.runEarlyStartup(EarlyStartupRunnable.java:79)
+	at org.eclipse.ui.internal.EarlyStartupRunnable.run(EarlyStartupRunnable.java:55)
+	at org.eclipse.core.runtime.SafeRunner.run(SafeRunner.java:45)
+	at org.eclipse.ui.internal.Workbench$39.run(Workbench.java:2737)
+	at org.eclipse.core.internal.jobs.Worker.run(Worker.java:63)
+Caused by: java.lang.IllegalStateException: The connection has been closed.
+	at com.teamdev.jxbrowser.internal.rpc.transport.CommonThreadCallExecutor.lambda$execute$0(CommonThreadCallExecutor.java:24)
+	at com.teamdev.jxbrowser.deps.com.google.protobuf.RpcUtil$1.run(RpcUtil.java:79)
+	at com.teamdev.jxbrowser.deps.com.google.protobuf.RpcUtil$1.run(RpcUtil.java:70)
+	at com.teamdev.jxbrowser.internal.rpc.ServiceChannel$1.onError(ServiceChannel.java:76)
+	at com.teamdev.jxbrowser.internal.rpc.transport.SharedMemoryTransport.lambda$close$1(SharedMemoryTransport.java:132)
+	at java.base/java.util.concurrent.ConcurrentHashMap.forEach(ConcurrentHashMap.java:1603)
+	at com.teamdev.jxbrowser.internal.rpc.transport.SharedMemoryTransport.close(SharedMemoryTransport.java:130)
+	at com.teamdev.jxbrowser.internal.rpc.transport.RpcConnection.close(RpcConnection.java:51)
+	at com.teamdev.jxbrowser.internal.rpc.transport.ConnectionChecker.run(ConnectionChecker.java:41)
+	at java.base/java.lang.Thread.run(Thread.java:833)
+
+!ENTRY org.eclipse.ui 4 0 2026-02-21 19:28:40.571
+!MESSAGE Unable to execute early startup code for the org.eclipse.ui.IStartup extension contributed by the 'com.st.stm32cube.ide.mcu.ide' plug-in.
+!STACK 0
+java.lang.IllegalStateException: Failed to receive the response.
+	at com.teamdev.jxbrowser.internal.rpc.transport.CommonThreadResponseConsumer.await(CommonThreadResponseConsumer.java:55)
+	at com.teamdev.jxbrowser.internal.rpc.transport.CommonThreadCallExecutor.execute(CommonThreadCallExecutor.java:29)
+	at com.teamdev.jxbrowser.internal.rpc.ServiceConnectionImpl.invoke(ServiceConnectionImpl.java:213)
+	at com.teamdev.jxbrowser.navigation.internal.NavigationImpl.loadAndWait(NavigationImpl.java:227)
+	at com.teamdev.jxbrowser.navigation.internal.NavigationImpl.loadUrlAndWait(NavigationImpl.java:104)
+	at com.teamdev.jxbrowser.navigation.internal.NavigationImpl.loadUrlAndWait(NavigationImpl.java:91)
+	at com.teamdev.jxbrowser.navigation.internal.NavigationImpl.loadUrlAndWait(NavigationImpl.java:83)
+	at com.teamdev.jxbrowser.browser.internal.BrowserImpl.initializeMainFrame(BrowserImpl.java:401)
+	at com.teamdev.jxbrowser.profile.internal.ProfileImpl.newBrowser(ProfileImpl.java:150)
+	at com.st.microxplorer.plugins.userauth.WebApp.<init>(WebApp.java:166)
+	at com.st.microxplorer.plugins.userauth.WebApp.getInstance(WebApp.java:715)
+	at com.st.microxplorer.plugins.userauth.UserAuth.getBrowserView(UserAuth.java:406)
+	at com.st.microxplorer.plugins.userauth.UserAuth.getSpecificTask(UserAuth.java:255)
+	at com.st.stm32cube.common.mx.userauth.UserAuthAdapter.addListener(UserAuthAdapter.java:51)
+	at com.st.stm32cube.ide.mcu.userauth.UserAuthStartup.earlyStartup(UserAuthStartup.java:42)
+	at org.eclipse.ui.internal.EarlyStartupRunnable.runEarlyStartup(EarlyStartupRunnable.java:79)
+	at org.eclipse.ui.internal.EarlyStartupRunnable.run(EarlyStartupRunnable.java:55)
+	at org.eclipse.core.runtime.SafeRunner.run(SafeRunner.java:45)
+	at org.eclipse.ui.internal.Workbench$39.run(Workbench.java:2737)
+	at org.eclipse.core.internal.jobs.Worker.run(Worker.java:63)
+Caused by: java.lang.IllegalStateException: The connection has been closed.
+	at com.teamdev.jxbrowser.internal.rpc.transport.CommonThreadCallExecutor.lambda$execute$0(CommonThreadCallExecutor.java:24)
+	at com.teamdev.jxbrowser.deps.com.google.protobuf.RpcUtil$1.run(RpcUtil.java:79)
+	at com.teamdev.jxbrowser.deps.com.google.protobuf.RpcUtil$1.run(RpcUtil.java:70)
+	at com.teamdev.jxbrowser.internal.rpc.ServiceChannel$1.onError(ServiceChannel.java:76)
+	at com.teamdev.jxbrowser.internal.rpc.transport.SharedMemoryTransport.lambda$close$1(SharedMemoryTransport.java:132)
+	at java.base/java.util.concurrent.ConcurrentHashMap.forEach(ConcurrentHashMap.java:1603)
+	at com.teamdev.jxbrowser.internal.rpc.transport.SharedMemoryTransport.close(SharedMemoryTransport.java:130)
+	at com.teamdev.jxbrowser.internal.rpc.transport.RpcConnection.close(RpcConnection.java:51)
+	at com.teamdev.jxbrowser.internal.rpc.transport.ConnectionChecker.run(ConnectionChecker.java:41)
+	at java.base/java.lang.Thread.run(Thread.java:833)
+
+!ENTRY org.eclipse.cdt.core 1 0 2026-02-21 19:29:25.927
+!MESSAGE Indexed 'UART_RTC_Handling-Processing_Using_Queues-Timers' (30 sources, 161 headers) in 4.43 sec: 15,046 declarations; 67,024 references; 2 unresolved inclusions; 352 syntax errors; 255 unresolved names (0.31%)
+
+!ENTRY org.eclipse.cdt.core 1 0 2026-02-22 02:33:17.983
+!MESSAGE Indexed 'UART_RTC_Handling-Processing_Using_Queues-Timers' (33 sources, 166 headers) in 1.8 sec: 16,818 declarations; 80,968 references; 2 unresolved inclusions; 352 syntax errors; 255 unresolved names (0.26%)
+
+!ENTRY org.eclipse.cdt.core 1 0 2026-02-22 02:38:49.002
+!MESSAGE Indexed 'UART_RTC_Handling-Processing_Using_Queues-Timers' (33 sources, 151 headers) in 1.7 sec: 16,391 declarations; 81,054 references; 2 unresolved inclusions; 230 syntax errors; 249 unresolved names (0.25%)
+
+!ENTRY org.eclipse.cdt.core 1 0 2026-02-22 02:40:50.726
+!MESSAGE Indexed 'UART_RTC_Handling-Processing_Using_Queues-Timers' (33 sources, 151 headers) in 1.57 sec: 16,391 declarations; 81,054 references; 2 unresolved inclusions; 230 syntax errors; 249 unresolved names (0.25%)
+
+!ENTRY org.eclipse.cdt.core 1 0 2026-02-22 02:43:20.250
+!MESSAGE Indexed 'UART_RTC_Handling-Processing_Using_Queues-Timers' (33 sources, 151 headers) in 1.6 sec: 16,391 declarations; 81,054 references; 2 unresolved inclusions; 230 syntax errors; 249 unresolved names (0.25%)
+!SESSION 2026-02-22 19:27:56.733 -----------------------------------------------
+eclipse.buildId=Version 1.14.0
+java.version=17.0.8.1
+java.vendor=Eclipse Adoptium
+BootLoader constants: OS=win32, ARCH=x86_64, WS=win32, NL=en_IN
+Command-line arguments:  -os win32 -ws win32 -arch x86_64
+
+!ENTRY com.st.stm32cube.ide.mcu.informationcenter 4 4 2026-02-22 19:28:03.887
+!MESSAGE CubeMX plugin appears to be active, Log4j initialization might be too late.
+
+!ENTRY com.st.stm32cube.ide.mcu.informationcenter 1 1 2026-02-22 19:28:03.889
+!MESSAGE Log4j2 initialized with config file D:\RTOS_udemy\UART_RTC_Handling-Processing_Using_Queues-Timers\.metadata\.log4j2.xml
+
+!ENTRY com.st.stm32cube.ide.mcu.ide 1 1 2026-02-22 19:28:10.116
+!MESSAGE Started RMI Server, listening on port 41337
+
+!ENTRY org.eclipse.ui.workbench 4 2 2026-02-22 19:28:16.180
+!MESSAGE Problems occurred when invoking code from plug-in: "org.eclipse.ui.workbench".
+!STACK 0
+java.lang.IllegalStateException: Failed to receive the response.
+	at com.teamdev.jxbrowser.internal.rpc.transport.CommonThreadResponseConsumer.await(CommonThreadResponseConsumer.java:55)
+	at com.teamdev.jxbrowser.internal.rpc.transport.CommonThreadCallExecutor.execute(CommonThreadCallExecutor.java:29)
+	at com.teamdev.jxbrowser.internal.rpc.ServiceConnectionImpl.invoke(ServiceConnectionImpl.java:213)
+	at com.teamdev.jxbrowser.navigation.internal.NavigationImpl.loadAndWait(NavigationImpl.java:227)
+	at com.teamdev.jxbrowser.navigation.internal.NavigationImpl.loadUrlAndWait(NavigationImpl.java:104)
+	at com.teamdev.jxbrowser.navigation.internal.NavigationImpl.loadUrlAndWait(NavigationImpl.java:91)
+	at com.teamdev.jxbrowser.navigation.internal.NavigationImpl.loadUrlAndWait(NavigationImpl.java:83)
+	at com.teamdev.jxbrowser.browser.internal.BrowserImpl.initializeMainFrame(BrowserImpl.java:401)
+	at com.teamdev.jxbrowser.profile.internal.ProfileImpl.newBrowser(ProfileImpl.java:150)
+	at com.st.microxplorer.plugins.userauth.WebApp.<init>(WebApp.java:166)
+	at com.st.microxplorer.plugins.userauth.WebApp.getInstance(WebApp.java:715)
+	at com.st.microxplorer.plugins.userauth.UserAuth.getBrowserView(UserAuth.java:406)
+	at com.st.microxplorer.plugins.userauth.UserAuth.getSpecificTask(UserAuth.java:255)
+	at com.st.stm32cube.common.mx.userauth.UserAuthAdapter.addListener(UserAuthAdapter.java:51)
+	at com.st.stm32cube.ide.mcu.userauth.UserAuthStartup.earlyStartup(UserAuthStartup.java:42)
+	at org.eclipse.ui.internal.EarlyStartupRunnable.runEarlyStartup(EarlyStartupRunnable.java:79)
+	at org.eclipse.ui.internal.EarlyStartupRunnable.run(EarlyStartupRunnable.java:55)
+	at org.eclipse.core.runtime.SafeRunner.run(SafeRunner.java:45)
+	at org.eclipse.ui.internal.Workbench$39.run(Workbench.java:2737)
+	at org.eclipse.core.internal.jobs.Worker.run(Worker.java:63)
+Caused by: java.lang.IllegalStateException: The connection has been closed.
+	at com.teamdev.jxbrowser.internal.rpc.transport.CommonThreadCallExecutor.lambda$execute$0(CommonThreadCallExecutor.java:24)
+	at com.teamdev.jxbrowser.deps.com.google.protobuf.RpcUtil$1.run(RpcUtil.java:79)
+	at com.teamdev.jxbrowser.deps.com.google.protobuf.RpcUtil$1.run(RpcUtil.java:70)
+	at com.teamdev.jxbrowser.internal.rpc.ServiceChannel$1.onError(ServiceChannel.java:76)
+	at com.teamdev.jxbrowser.internal.rpc.transport.SharedMemoryTransport.lambda$close$1(SharedMemoryTransport.java:132)
+	at java.base/java.util.concurrent.ConcurrentHashMap.forEach(ConcurrentHashMap.java:1603)
+	at com.teamdev.jxbrowser.internal.rpc.transport.SharedMemoryTransport.close(SharedMemoryTransport.java:130)
+	at com.teamdev.jxbrowser.internal.rpc.transport.RpcConnection.close(RpcConnection.java:51)
+	at com.teamdev.jxbrowser.internal.rpc.transport.ConnectionChecker.run(ConnectionChecker.java:41)
+	at java.base/java.lang.Thread.run(Thread.java:833)
+
+!ENTRY org.eclipse.ui 4 0 2026-02-22 19:28:16.183
+!MESSAGE Unable to execute early startup code for the org.eclipse.ui.IStartup extension contributed by the 'com.st.stm32cube.ide.mcu.ide' plug-in.
+!STACK 0
+java.lang.IllegalStateException: Failed to receive the response.
+	at com.teamdev.jxbrowser.internal.rpc.transport.CommonThreadResponseConsumer.await(CommonThreadResponseConsumer.java:55)
+	at com.teamdev.jxbrowser.internal.rpc.transport.CommonThreadCallExecutor.execute(CommonThreadCallExecutor.java:29)
+	at com.teamdev.jxbrowser.internal.rpc.ServiceConnectionImpl.invoke(ServiceConnectionImpl.java:213)
+	at com.teamdev.jxbrowser.navigation.internal.NavigationImpl.loadAndWait(NavigationImpl.java:227)
+	at com.teamdev.jxbrowser.navigation.internal.NavigationImpl.loadUrlAndWait(NavigationImpl.java:104)
+	at com.teamdev.jxbrowser.navigation.internal.NavigationImpl.loadUrlAndWait(NavigationImpl.java:91)
+	at com.teamdev.jxbrowser.navigation.internal.NavigationImpl.loadUrlAndWait(NavigationImpl.java:83)
+	at com.teamdev.jxbrowser.browser.internal.BrowserImpl.initializeMainFrame(BrowserImpl.java:401)
+	at com.teamdev.jxbrowser.profile.internal.ProfileImpl.newBrowser(ProfileImpl.java:150)
+	at com.st.microxplorer.plugins.userauth.WebApp.<init>(WebApp.java:166)
+	at com.st.microxplorer.plugins.userauth.WebApp.getInstance(WebApp.java:715)
+	at com.st.microxplorer.plugins.userauth.UserAuth.getBrowserView(UserAuth.java:406)
+	at com.st.microxplorer.plugins.userauth.UserAuth.getSpecificTask(UserAuth.java:255)
+	at com.st.stm32cube.common.mx.userauth.UserAuthAdapter.addListener(UserAuthAdapter.java:51)
+	at com.st.stm32cube.ide.mcu.userauth.UserAuthStartup.earlyStartup(UserAuthStartup.java:42)
+	at org.eclipse.ui.internal.EarlyStartupRunnable.runEarlyStartup(EarlyStartupRunnable.java:79)
+	at org.eclipse.ui.internal.EarlyStartupRunnable.run(EarlyStartupRunnable.java:55)
+	at org.eclipse.core.runtime.SafeRunner.run(SafeRunner.java:45)
+	at org.eclipse.ui.internal.Workbench$39.run(Workbench.java:2737)
+	at org.eclipse.core.internal.jobs.Worker.run(Worker.java:63)
+Caused by: java.lang.IllegalStateException: The connection has been closed.
+	at com.teamdev.jxbrowser.internal.rpc.transport.CommonThreadCallExecutor.lambda$execute$0(CommonThreadCallExecutor.java:24)
+	at com.teamdev.jxbrowser.deps.com.google.protobuf.RpcUtil$1.run(RpcUtil.java:79)
+	at com.teamdev.jxbrowser.deps.com.google.protobuf.RpcUtil$1.run(RpcUtil.java:70)
+	at com.teamdev.jxbrowser.internal.rpc.ServiceChannel$1.onError(ServiceChannel.java:76)
+	at com.teamdev.jxbrowser.internal.rpc.transport.SharedMemoryTransport.lambda$close$1(SharedMemoryTransport.java:132)
+	at java.base/java.util.concurrent.ConcurrentHashMap.forEach(ConcurrentHashMap.java:1603)
+	at com.teamdev.jxbrowser.internal.rpc.transport.SharedMemoryTransport.close(SharedMemoryTransport.java:130)
+	at com.teamdev.jxbrowser.internal.rpc.transport.RpcConnection.close(RpcConnection.java:51)
+	at com.teamdev.jxbrowser.internal.rpc.transport.ConnectionChecker.run(ConnectionChecker.java:41)
+	at java.base/java.lang.Thread.run(Thread.java:833)
+
+!ENTRY com.st.stm32cube.ide.mcu.debug.swv 1 1 2026-02-22 21:38:12.970
+!MESSAGE SWV configuration; base: 36000000; minDiv: 18; maxDiv: 65535; maxSWO: 2000000; limit: 2000000 => SWO: 1894736; CPU: 25000000; div: 13
+
+!ENTRY com.st.stm32cube.ide.mcu.debug.swv 1 1 2026-02-22 21:41:27.347
+!MESSAGE SWV configuration; base: 36000000; minDiv: 18; maxDiv: 65535; maxSWO: 2000000; limit: 2000000 => SWO: 2000000; CPU: 168000000; div: 84
+
+!ENTRY org.eclipse.cdt.dsf.gdb 4 4 2026-02-22 21:41:47.403
+!MESSAGE NullPointerException while trying to calculated source lookup path. This can be ignored if it occurs while terminating a debug session. See Bug 500988.
+!STACK 0
+java.lang.NullPointerException: Cannot read the array length because "containers" is null
+	at org.eclipse.cdt.dsf.gdb.launching.GdbSourceLookupDirector.collectSubstitutionsPaths(GdbSourceLookupDirector.java:102)
+	at org.eclipse.cdt.dsf.gdb.launching.GdbSourceLookupDirector.collectSubstitutionsPaths(GdbSourceLookupDirector.java:146)
+	at org.eclipse.cdt.dsf.gdb.launching.GdbSourceLookupDirector.getSubstitutionsPaths(GdbSourceLookupDirector.java:72)
+	at org.eclipse.cdt.dsf.gdb.service.GDBSourceLookup.getSubstitutionsPaths(GDBSourceLookup.java:124)
+	at org.eclipse.cdt.dsf.gdb.service.GDBSourceLookup.sourceContainersChanged(GDBSourceLookup.java:139)
+	at org.eclipse.cdt.dsf.gdb.launching.GdbSourceLookupParticipant.sourceContainersChangedOnDispatchThread(GdbSourceLookupParticipant.java:120)
+	at org.eclipse.cdt.dsf.gdb.launching.GdbSourceLookupParticipant$1.run(GdbSourceLookupParticipant.java:85)
+	at java.base/java.util.concurrent.Executors$RunnableAdapter.call(Executors.java:539)
+	at java.base/java.util.concurrent.FutureTask.run(FutureTask.java:264)
+	at java.base/java.util.concurrent.ScheduledThreadPoolExecutor$ScheduledFutureTask.run(ScheduledThreadPoolExecutor.java:304)
+	at java.base/java.util.concurrent.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1136)
+	at java.base/java.util.concurrent.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:635)
+	at java.base/java.lang.Thread.run(Thread.java:833)
+
+!ENTRY com.st.stm32cube.ide.mcu.debug.swv 1 1 2026-02-22 21:57:06.531
+!MESSAGE SWV configuration; base: 36000000; minDiv: 18; maxDiv: 65535; maxSWO: 2000000; limit: 2000000 => SWO: 2000000; CPU: 168000000; div: 84
+
+!ENTRY com.st.stm32cube.ide.mcu.debug.swv 1 1 2026-02-22 22:07:25.082
+!MESSAGE SWV configuration; base: 36000000; minDiv: 18; maxDiv: 65535; maxSWO: 2000000; limit: 2000000 => SWO: 2000000; CPU: 168000000; div: 84
+
+!ENTRY com.st.stm32cube.ide.mcu.debug.swv 1 1 2026-02-22 22:26:03.208
+!MESSAGE SWV configuration; base: 36000000; minDiv: 18; maxDiv: 65535; maxSWO: 2000000; limit: 2000000 => SWO: 2000000; CPU: 168000000; div: 84
+!SESSION 2026-02-23 18:17:22.413 -----------------------------------------------
+eclipse.buildId=Version 1.14.0
+java.version=17.0.8.1
+java.vendor=Eclipse Adoptium
+BootLoader constants: OS=win32, ARCH=x86_64, WS=win32, NL=en_IN
+Command-line arguments:  -os win32 -ws win32 -arch x86_64
+
+!ENTRY com.st.stm32cube.ide.mcu.informationcenter 4 4 2026-02-23 18:17:57.733
+!MESSAGE CubeMX plugin appears to be active, Log4j initialization might be too late.
+
+!ENTRY com.st.stm32cube.ide.mcu.informationcenter 1 1 2026-02-23 18:17:57.734
+!MESSAGE Log4j2 initialized with config file D:\RTOS_udemy\UART_RTC_Handling-Processing_Using_Queues-Timers\.metadata\.log4j2.xml
+
+!ENTRY com.st.stm32cube.ide.mcu.ide 1 1 2026-02-23 18:18:01.195
+!MESSAGE Started RMI Server, listening on port 41337
+
+!ENTRY org.eclipse.ui.workbench 4 2 2026-02-23 18:18:05.661
+!MESSAGE Problems occurred when invoking code from plug-in: "org.eclipse.ui.workbench".
+!STACK 0
+java.lang.IllegalStateException: Failed to receive the response.
+	at com.teamdev.jxbrowser.internal.rpc.transport.CommonThreadResponseConsumer.await(CommonThreadResponseConsumer.java:55)
+	at com.teamdev.jxbrowser.internal.rpc.transport.CommonThreadCallExecutor.execute(CommonThreadCallExecutor.java:29)
+	at com.teamdev.jxbrowser.internal.rpc.ServiceConnectionImpl.invoke(ServiceConnectionImpl.java:213)
+	at com.teamdev.jxbrowser.navigation.internal.NavigationImpl.loadAndWait(NavigationImpl.java:227)
+	at com.teamdev.jxbrowser.navigation.internal.NavigationImpl.loadUrlAndWait(NavigationImpl.java:104)
+	at com.teamdev.jxbrowser.navigation.internal.NavigationImpl.loadUrlAndWait(NavigationImpl.java:91)
+	at com.teamdev.jxbrowser.navigation.internal.NavigationImpl.loadUrlAndWait(NavigationImpl.java:83)
+	at com.teamdev.jxbrowser.browser.internal.BrowserImpl.initializeMainFrame(BrowserImpl.java:401)
+	at com.teamdev.jxbrowser.profile.internal.ProfileImpl.newBrowser(ProfileImpl.java:150)
+	at com.st.microxplorer.plugins.userauth.WebApp.<init>(WebApp.java:166)
+	at com.st.microxplorer.plugins.userauth.WebApp.getInstance(WebApp.java:715)
+	at com.st.microxplorer.plugins.userauth.UserAuth.getBrowserView(UserAuth.java:406)
+	at com.st.microxplorer.plugins.userauth.UserAuth.getSpecificTask(UserAuth.java:255)
+	at com.st.stm32cube.common.mx.userauth.UserAuthAdapter.addListener(UserAuthAdapter.java:51)
+	at com.st.stm32cube.ide.mcu.userauth.UserAuthStartup.earlyStartup(UserAuthStartup.java:42)
+	at org.eclipse.ui.internal.EarlyStartupRunnable.runEarlyStartup(EarlyStartupRunnable.java:79)
+	at org.eclipse.ui.internal.EarlyStartupRunnable.run(EarlyStartupRunnable.java:55)
+	at org.eclipse.core.runtime.SafeRunner.run(SafeRunner.java:45)
+	at org.eclipse.ui.internal.Workbench$39.run(Workbench.java:2737)
+	at org.eclipse.core.internal.jobs.Worker.run(Worker.java:63)
+Caused by: java.lang.IllegalStateException: The connection has been closed.
+	at com.teamdev.jxbrowser.internal.rpc.transport.CommonThreadCallExecutor.lambda$execute$0(CommonThreadCallExecutor.java:24)
+	at com.teamdev.jxbrowser.deps.com.google.protobuf.RpcUtil$1.run(RpcUtil.java:79)
+	at com.teamdev.jxbrowser.deps.com.google.protobuf.RpcUtil$1.run(RpcUtil.java:70)
+	at com.teamdev.jxbrowser.internal.rpc.ServiceChannel$1.onError(ServiceChannel.java:76)
+	at com.teamdev.jxbrowser.internal.rpc.transport.SharedMemoryTransport.lambda$close$1(SharedMemoryTransport.java:132)
+	at java.base/java.util.concurrent.ConcurrentHashMap.forEach(ConcurrentHashMap.java:1603)
+	at com.teamdev.jxbrowser.internal.rpc.transport.SharedMemoryTransport.close(SharedMemoryTransport.java:130)
+	at com.teamdev.jxbrowser.internal.rpc.transport.RpcConnection.close(RpcConnection.java:51)
+	at com.teamdev.jxbrowser.internal.rpc.transport.ConnectionChecker.run(ConnectionChecker.java:41)
+	at java.base/java.lang.Thread.run(Thread.java:833)
+
+!ENTRY org.eclipse.ui 4 0 2026-02-23 18:18:05.662
+!MESSAGE Unable to execute early startup code for the org.eclipse.ui.IStartup extension contributed by the 'com.st.stm32cube.ide.mcu.ide' plug-in.
+!STACK 0
+java.lang.IllegalStateException: Failed to receive the response.
+	at com.teamdev.jxbrowser.internal.rpc.transport.CommonThreadResponseConsumer.await(CommonThreadResponseConsumer.java:55)
+	at com.teamdev.jxbrowser.internal.rpc.transport.CommonThreadCallExecutor.execute(CommonThreadCallExecutor.java:29)
+	at com.teamdev.jxbrowser.internal.rpc.ServiceConnectionImpl.invoke(ServiceConnectionImpl.java:213)
+	at com.teamdev.jxbrowser.navigation.internal.NavigationImpl.loadAndWait(NavigationImpl.java:227)
+	at com.teamdev.jxbrowser.navigation.internal.NavigationImpl.loadUrlAndWait(NavigationImpl.java:104)
+	at com.teamdev.jxbrowser.navigation.internal.NavigationImpl.loadUrlAndWait(NavigationImpl.java:91)
+	at com.teamdev.jxbrowser.navigation.internal.NavigationImpl.loadUrlAndWait(NavigationImpl.java:83)
+	at com.teamdev.jxbrowser.browser.internal.BrowserImpl.initializeMainFrame(BrowserImpl.java:401)
+	at com.teamdev.jxbrowser.profile.internal.ProfileImpl.newBrowser(ProfileImpl.java:150)
+	at com.st.microxplorer.plugins.userauth.WebApp.<init>(WebApp.java:166)
+	at com.st.microxplorer.plugins.userauth.WebApp.getInstance(WebApp.java:715)
+	at com.st.microxplorer.plugins.userauth.UserAuth.getBrowserView(UserAuth.java:406)
+	at com.st.microxplorer.plugins.userauth.UserAuth.getSpecificTask(UserAuth.java:255)
+	at com.st.stm32cube.common.mx.userauth.UserAuthAdapter.addListener(UserAuthAdapter.java:51)
+	at com.st.stm32cube.ide.mcu.userauth.UserAuthStartup.earlyStartup(UserAuthStartup.java:42)
+	at org.eclipse.ui.internal.EarlyStartupRunnable.runEarlyStartup(EarlyStartupRunnable.java:79)
+	at org.eclipse.ui.internal.EarlyStartupRunnable.run(EarlyStartupRunnable.java:55)
+	at org.eclipse.core.runtime.SafeRunner.run(SafeRunner.java:45)
+	at org.eclipse.ui.internal.Workbench$39.run(Workbench.java:2737)
+	at org.eclipse.core.internal.jobs.Worker.run(Worker.java:63)
+Caused by: java.lang.IllegalStateException: The connection has been closed.
+	at com.teamdev.jxbrowser.internal.rpc.transport.CommonThreadCallExecutor.lambda$execute$0(CommonThreadCallExecutor.java:24)
+	at com.teamdev.jxbrowser.deps.com.google.protobuf.RpcUtil$1.run(RpcUtil.java:79)
+	at com.teamdev.jxbrowser.deps.com.google.protobuf.RpcUtil$1.run(RpcUtil.java:70)
+	at com.teamdev.jxbrowser.internal.rpc.ServiceChannel$1.onError(ServiceChannel.java:76)
+	at com.teamdev.jxbrowser.internal.rpc.transport.SharedMemoryTransport.lambda$close$1(SharedMemoryTransport.java:132)
+	at java.base/java.util.concurrent.ConcurrentHashMap.forEach(ConcurrentHashMap.java:1603)
+	at com.teamdev.jxbrowser.internal.rpc.transport.SharedMemoryTransport.close(SharedMemoryTransport.java:130)
+	at com.teamdev.jxbrowser.internal.rpc.transport.RpcConnection.close(RpcConnection.java:51)
+	at com.teamdev.jxbrowser.internal.rpc.transport.ConnectionChecker.run(ConnectionChecker.java:41)
+	at java.base/java.lang.Thread.run(Thread.java:833)
+
+!ENTRY org.eclipse.cdt.core 1 0 2026-02-23 18:25:49.293
+!MESSAGE Indexed 'UART_RTC_Handling-Processing_Using_Queues-Timers' (33 sources, 151 headers) in 5.04 sec: 16,444 declarations; 81,523 references; 2 unresolved inclusions; 230 syntax errors; 249 unresolved names (0.25%)

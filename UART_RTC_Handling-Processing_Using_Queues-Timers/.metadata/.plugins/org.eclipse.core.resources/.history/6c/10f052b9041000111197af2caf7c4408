@@ -1,0 +1,1045 @@
+/* USER CODE BEGIN Header */
+/**
+ ******************************************************************************
+ * @file           : main.c
+ * @brief          : Main program body
+ ******************************************************************************
+ * @attention
+ *
+ * Copyright (c) 2026 STMicroelectronics.
+ * All rights reserved.
+ *
+ * This software is licensed under terms that can be found in the LICENSE file
+ * in the root directory of this software component.
+ * If no LICENSE file comes with this software, it is provided AS-IS.
+ *
+ ******************************************************************************
+ */
+/* USER CODE END Header */
+/* Includes ------------------------------------------------------------------*/
+#include "main.h"
+
+/* Private includes ----------------------------------------------------------*/
+/* USER CODE BEGIN Includes */
+#include <string.h>
+#include "FreeRTOS.h"
+#include "task.h"
+#include "queue.h"
+#include "timers.h"
+#include <stdio.h>
+/* USER CODE END Includes */
+
+/* Private typedef -----------------------------------------------------------*/
+/* USER CODE BEGIN PTD */
+typedef struct {
+	uint8_t payload[10];
+	uint32_t len;
+} command_t;
+
+/* Application states */
+typedef enum {
+	sMainMenu = 0,
+	sLedEffect,
+	sRtcMenu,
+	sRtcTimeConfig,
+	sRtcDateConfig,
+	sRtcReport,
+} state_t;
+/* USER CODE END PTD */
+
+/* Private define ------------------------------------------------------------*/
+/* USER CODE BEGIN PD */
+xTaskHandle handle_cmd_task;
+xTaskHandle handle_menu_task;
+xTaskHandle handle_print_task;
+xTaskHandle handle_led_task;
+xTaskHandle handle_rtc_task;
+
+QueueHandle_t q_data;
+QueueHandle_t q_print;
+
+//software timer handles
+TimerHandle_t handle_led_timer[4];
+TimerHandle_t rtc_timer;
+
+volatile uint8_t user_data;
+
+//state variable
+state_t curr_state = sMainMenu;
+
+const char *msg_inv = "////Invalid option////\n";
+
+/* USER CODE END PD */
+
+/* Private macro -------------------------------------------------------------*/
+/* USER CODE BEGIN PM */
+
+/* USER CODE END PM */
+
+/* Private variables ---------------------------------------------------------*/
+RTC_HandleTypeDef hrtc;
+
+UART_HandleTypeDef huart2;
+
+/* USER CODE BEGIN PV */
+int toggle_led_flag = 0;
+/* USER CODE END PV */
+
+/* Private function prototypes -----------------------------------------------*/
+void SystemClock_Config(void);
+static void MX_GPIO_Init(void);
+static void MX_RTC_Init(void);
+static void MX_USART2_UART_Init(void);
+/* USER CODE BEGIN PFP */
+
+void menu_task(void *param);
+void led_task(void *param);
+void rtc_task(void *param);
+void print_task(void *param);
+void cmd_handler_task(void *param);
+int extract_command(command_t *cmd);
+
+void show_time_date(void);
+void show_time_date_itm(void);
+void rtc_configure_time(RTC_TimeTypeDef *time);
+void rtc_configure_date(RTC_DateTypeDef *date);
+int validate_rtc_information(RTC_TimeTypeDef *time, RTC_DateTypeDef *date);
+void process_command(command_t *cmd);
+
+void led_effect_callback(TimerHandle_t xTimer);
+void rtc_report_callback(TimerHandle_t xTimer);
+/* USER CODE END PFP */
+
+/* Private user code ---------------------------------------------------------*/
+/* USER CODE BEGIN 0 */
+
+/* FreeRTOS calls this automatically if a task overflows its stack.
+ pcTaskName tells you WHICH task caused the overflow.
+ The for(;;) hangs the program so you can see it in the debugger. */
+void vApplicationStackOverflowHook(TaskHandle_t xTask, char *pcTaskName) {
+	(void) xTask; /* Suppress unused variable warning */
+	(void) pcTaskName; /* Suppress unused variable warning */
+	for (;;)
+		; /* Hang here — attach debugger to see which task crashed */
+}
+
+/* FreeRTOS calls this automatically when heap memory runs out.
+ This happens when xTaskCreate, xQueueCreate, xSemaphoreCreate etc. fail
+ because when configTOTAL_HEAP_SIZE is too small.
+ The for(;;) hangs the program so you can catch it in the debugger. */
+void vApplicationMallocFailedHook(void) {
+	for (;;)
+		; /* Hang here — debugger will stop at this line */
+}
+
+void led_effect_callback(TimerHandle_t xTimer) {
+	int id;
+	id = (uint32_t) pvTimerGetTimerID(xTimer);
+
+	switch (id) {
+	case 1:
+		if (toggle_led_flag == 1) {
+			HAL_GPIO_WritePin(GPIOD, GPIO_PIN_12, GPIO_PIN_SET);
+			HAL_GPIO_WritePin(GPIOD, GPIO_PIN_13, GPIO_PIN_SET);
+			HAL_GPIO_WritePin(GPIOD, GPIO_PIN_14, GPIO_PIN_SET);
+			HAL_GPIO_WritePin(GPIOD, GPIO_PIN_15, GPIO_PIN_SET);
+			toggle_led_flag = 0;
+		} else {
+			HAL_GPIO_WritePin(GPIOD, GPIO_PIN_12, GPIO_PIN_RESET);
+			HAL_GPIO_WritePin(GPIOD, GPIO_PIN_13, GPIO_PIN_RESET);
+			HAL_GPIO_WritePin(GPIOD, GPIO_PIN_14, GPIO_PIN_RESET);
+			HAL_GPIO_WritePin(GPIOD, GPIO_PIN_15, GPIO_PIN_RESET);
+			toggle_led_flag = 1;
+		}
+		break;
+	case 2:
+		if (toggle_led_flag == 1) {
+			HAL_GPIO_WritePin(GPIOD, GPIO_PIN_12, GPIO_PIN_SET);
+			HAL_GPIO_WritePin(GPIOD, GPIO_PIN_13, GPIO_PIN_RESET);
+			HAL_GPIO_WritePin(GPIOD, GPIO_PIN_14, GPIO_PIN_SET);
+			HAL_GPIO_WritePin(GPIOD, GPIO_PIN_15, GPIO_PIN_RESET);
+			toggle_led_flag = 0;
+		} else {
+			HAL_GPIO_WritePin(GPIOD, GPIO_PIN_12, GPIO_PIN_RESET);
+			HAL_GPIO_WritePin(GPIOD, GPIO_PIN_13, GPIO_PIN_SET);
+			HAL_GPIO_WritePin(GPIOD, GPIO_PIN_14, GPIO_PIN_RESET);
+			HAL_GPIO_WritePin(GPIOD, GPIO_PIN_15, GPIO_PIN_SET);
+			toggle_led_flag = 1;
+		}
+		break;
+	case 3:
+		if (toggle_led_flag == 1) {
+			HAL_GPIO_WritePin(GPIOD, GPIO_PIN_12, GPIO_PIN_SET);
+			HAL_GPIO_WritePin(GPIOD, GPIO_PIN_13, GPIO_PIN_SET);
+			HAL_GPIO_WritePin(GPIOD, GPIO_PIN_14, GPIO_PIN_RESET);
+			HAL_GPIO_WritePin(GPIOD, GPIO_PIN_15, GPIO_PIN_RESET);
+			toggle_led_flag = 0;
+		} else {
+			HAL_GPIO_WritePin(GPIOD, GPIO_PIN_12, GPIO_PIN_RESET);
+			HAL_GPIO_WritePin(GPIOD, GPIO_PIN_13, GPIO_PIN_RESET);
+			HAL_GPIO_WritePin(GPIOD, GPIO_PIN_14, GPIO_PIN_SET);
+			HAL_GPIO_WritePin(GPIOD, GPIO_PIN_15, GPIO_PIN_SET);
+			toggle_led_flag = 1;
+		}
+		break;
+	case 4:
+		if (toggle_led_flag == 1) {
+			HAL_GPIO_WritePin(GPIOD, GPIO_PIN_12, GPIO_PIN_RESET);
+			HAL_GPIO_WritePin(GPIOD, GPIO_PIN_13, GPIO_PIN_SET);
+			HAL_GPIO_WritePin(GPIOD, GPIO_PIN_14, GPIO_PIN_SET);
+			HAL_GPIO_WritePin(GPIOD, GPIO_PIN_15, GPIO_PIN_RESET);
+			toggle_led_flag = 0;
+		} else {
+			HAL_GPIO_WritePin(GPIOD, GPIO_PIN_12, GPIO_PIN_SET);
+			HAL_GPIO_WritePin(GPIOD, GPIO_PIN_13, GPIO_PIN_RESET);
+			HAL_GPIO_WritePin(GPIOD, GPIO_PIN_14, GPIO_PIN_RESET);
+			HAL_GPIO_WritePin(GPIOD, GPIO_PIN_15, GPIO_PIN_SET);
+			toggle_led_flag = 1;
+		}
+		//LED_effect4();
+	}
+
+}
+
+void menu_task(void *param) {
+
+	uint32_t cmd_addr;
+	command_t *cmd;
+	int option;
+
+	const char *msg_menu = "\n========================\n"
+			"|         Menu         |\n"
+			"========================\n"
+			"LED effect    ----> 0\n"
+			"Date and time ----> 1\n"
+			"Exit          ----> 2\n"
+			"Enter your choice here : ";
+
+	while (1) {
+
+		xQueueSend(q_print, &msg_menu, portMAX_DELAY);
+		xTaskNotifyWait(0, 0, &cmd_addr, portMAX_DELAY);
+		cmd = (command_t*) cmd_addr;
+		if (cmd->len == 1) {
+			option = cmd->payload[0] - 48;
+			switch (option) {
+			case 0:
+				curr_state = sLedEffect;
+				xTaskNotify(handle_led_task, 0, eNoAction);
+				break;
+			case 1:
+				curr_state = sRtcMenu;
+				xTaskNotify(handle_rtc_task, 0, eNoAction);
+				break;
+			case 2: /*exit */
+				break;
+			default:
+				xQueueSend(q_print, &msg_inv, portMAX_DELAY);
+				continue;
+			}
+		} else {
+			xQueueSend(q_print, &msg_inv, portMAX_DELAY);
+			continue;
+		}
+
+		//wait to run again when some other task notifies
+		xTaskNotifyWait(0, 0, NULL, portMAX_DELAY);
+
+	}
+}
+
+void led_task(void *param) {
+
+	uint32_t cmd_addr;
+	command_t *cmd;
+	const char *msg_led = "========================\n"
+			"|      LED Effect     |\n"
+			"========================\n"
+			"(none,e1,e2,e3,e4)\n"
+			"Enter your choice here : ";
+
+	while (1) {
+		/*Wait for notification (Notify wait) */
+		xTaskNotifyWait(0, 0, NULL, portMAX_DELAY);
+
+		/*Print LED menu */
+		xQueueSend(q_print, &msg_led, portMAX_DELAY);
+
+		/*wait for LED command (Notify wait) */
+		xTaskNotifyWait(0, 0, &cmd_addr, portMAX_DELAY);
+		cmd = (command_t*) cmd_addr;
+
+		if (cmd->len <= 4) {
+			if (!strcmp((char*) cmd->payload, "none")) {
+				for (int i = 0; i < 4; i++) {
+					xTimerStop(handle_led_timer[i], portMAX_DELAY);
+				}
+			} else if (!strcmp((char*) cmd->payload, "e1")) {
+				for (int i = 0; i < 4; i++) {
+					xTimerStop(handle_led_timer[i], portMAX_DELAY);
+				}
+				xTimerStart(handle_led_timer[0], portMAX_DELAY);
+			} else if (!strcmp((char*) cmd->payload, "e2")) {
+				for (int i = 0; i < 4; i++) {
+					xTimerStop(handle_led_timer[i], portMAX_DELAY);
+				}
+				xTimerStart(handle_led_timer[1], portMAX_DELAY);
+			} else if (!strcmp((char*) cmd->payload, "e3")) {
+				for (int i = 0; i < 4; i++) {
+					xTimerStop(handle_led_timer[i], portMAX_DELAY);
+				}
+				xTimerStart(handle_led_timer[2], portMAX_DELAY);
+			} else if (!strcmp((char*) cmd->payload, "e4")) {
+				for (int i = 0; i < 4; i++) {
+					xTimerStop(handle_led_timer[i], portMAX_DELAY);
+				}
+				xTimerStart(handle_led_timer[3], portMAX_DELAY);
+			} else
+				xQueueSend(q_print, &msg_inv, portMAX_DELAY); /*print invalid message */
+		} else
+			xQueueSend(q_print, &msg_inv, portMAX_DELAY);
+
+		/* update state variable */
+		curr_state = sMainMenu;
+
+		/*Notify menu task */
+		xTaskNotify(handle_menu_task, 0, eNoAction);
+
+	}
+}
+
+uint8_t getnumber(uint8_t *p, int len) {
+
+	int value;
+
+	if (len > 1)
+		value = (((p[0] - 48) * 10) + (p[1] - 48));
+	else
+		value = p[0] - 48;
+
+	return value;
+
+}
+
+void show_time_date(void) {
+	static char showtime[40];
+	static char showdate[40];
+
+	RTC_DateTypeDef rtc_date;
+	RTC_TimeTypeDef rtc_time;
+
+	static char *time = showtime;
+	static char *date = showdate;
+
+	memset(&rtc_date, 0, sizeof(rtc_date));
+	memset(&rtc_time, 0, sizeof(rtc_time));
+
+	/* Get the RTC current Time */
+	HAL_RTC_GetTime(&hrtc, &rtc_time, RTC_FORMAT_BIN);
+	/* Get the RTC current Date */
+	HAL_RTC_GetDate(&hrtc, &rtc_date, RTC_FORMAT_BIN);
+
+	char *format;
+	format = (rtc_time.TimeFormat == RTC_HOURFORMAT12_AM) ? "AM" : "PM";
+
+	/* Display time Format : hh:mm:ss [AM/PM] */
+	sprintf((char*) showtime, "%s:\t%02d:%02d:%02d [%s]", "\nCurrent Time&Date",
+			rtc_time.Hours, rtc_time.Minutes, rtc_time.Seconds, format);
+	xQueueSend(q_print, &time, portMAX_DELAY);
+
+	/* Display date Format : date-month-year */
+	sprintf((char*) showdate, "\t%02d-%02d-%2d\n", rtc_date.Month,
+			rtc_date.Date, 2000 + rtc_date.Year);
+	xQueueSend(q_print, &date, portMAX_DELAY);
+}
+
+void rtc_task(void *param) {
+
+	const char *msg_rtc1 = "========================\n"
+			"|         RTC          |\n"
+			"========================\n";
+
+	const char *msg_rtc2 = "Configure Time            ----> 0\n"
+			"Configure Date            ----> 1\n"
+			"Enable reporting          ----> 2\n"
+			"Exit                      ----> 4\n"
+			"Enter your choice here : ";
+
+	const char *msg_rtc_hh = "Enter hour(1-12):";
+	const char *msg_rtc_mm = "Enter minutes(0-59):";
+	const char *msg_rtc_ss = "Enter seconds(0-59):";
+
+	const char *msg_rtc_dd = "Enter date(1-31):";
+	const char *msg_rtc_mo = "Enter month(1-12):";
+	const char *msg_rtc_dow = "Enter day(1-7 sun:1):";
+	const char *msg_rtc_yr = "Enter year(0-99):";
+
+	const char *msg_conf = "Configuration successful\n";
+	const char *msg_rtc_report = "Enable time&date reporting(y/n)?: ";
+
+	uint32_t cmd_addr;
+	command_t *cmd;
+
+	static int rtc_state = 0;
+	int menu_code;
+
+	RTC_TimeTypeDef time;
+	RTC_DateTypeDef date;
+
+#define HH_CONFIG 		0
+#define MM_CONFIG 		1
+#define SS_CONFIG 		2
+
+#define DATE_CONFIG 	0
+#define MONTH_CONFIG 	1
+#define YEAR_CONFIG 	2
+#define DAY_CONFIG 		3
+
+	while (1) {
+
+		// wait till someone notify yuou//
+		xTaskNotifyWait(0, 0, NULL, portMAX_DELAY);
+
+		//print the menu and show current data and time information//
+		xQueueSend(q_print, &msg_rtc1, portMAX_DELAY);
+
+		show_time_date();
+
+		xQueueSend(q_print, &msg_rtc2, portMAX_DELAY);
+
+		while (curr_state != sMainMenu) {
+
+			/*Wait for command notification (Notify wait) */
+			xTaskNotifyWait(0, 0, &cmd_addr, portMAX_DELAY);
+			cmd = (command_t*) cmd_addr;
+
+			switch (curr_state) {
+			case sRtcMenu: {
+				/*process RTC menu commands */
+				if (cmd->len == 1) {
+					menu_code = cmd->payload[0] - 48;
+					switch (menu_code) {
+					case 0:
+						curr_state = sRtcTimeConfig;
+						xQueueSend(q_print, &msg_rtc_hh, portMAX_DELAY);
+						break;
+					case 1:
+						curr_state = sRtcDateConfig;
+						xQueueSend(q_print, &msg_rtc_dd, portMAX_DELAY);
+						break;
+					case 2:
+						curr_state = sRtcReport;
+						xQueueSend(q_print, &msg_rtc_report, portMAX_DELAY);
+						break;
+					case 3:
+						curr_state = sMainMenu;
+						break;
+					default:
+						curr_state = sMainMenu;
+						xQueueSend(q_print, &msg_inv, portMAX_DELAY);
+					}
+
+				} else {
+					curr_state = sMainMenu;
+					xQueueSend(q_print, &msg_inv, portMAX_DELAY);
+				}
+				break;
+			}
+
+			case sRtcTimeConfig: {
+				/*get hh, mm, ss infor and configure RTC */
+				/*take care of invalid entries */
+				switch (rtc_state) {
+				case HH_CONFIG: {
+					uint8_t hour = getnumber(cmd->payload, cmd->len);
+					time.Hours = hour;
+					rtc_state = MM_CONFIG;
+					xQueueSend(q_print, &msg_rtc_mm, portMAX_DELAY);
+					break;
+				}
+				case MM_CONFIG: {
+					uint8_t min = getnumber(cmd->payload, cmd->len);
+					time.Minutes = min;
+					rtc_state = SS_CONFIG;
+					xQueueSend(q_print, &msg_rtc_ss, portMAX_DELAY);
+					break;
+				}
+				case SS_CONFIG: {
+					uint8_t sec = getnumber(cmd->payload, cmd->len);
+					time.Seconds = sec;
+					if (!validate_rtc_information(&time, NULL)) {
+						rtc_configure_time(&time);
+						xQueueSend(q_print, &msg_conf, portMAX_DELAY);
+						show_time_date();
+					} else
+						xQueueSend(q_print, &msg_inv, portMAX_DELAY);
+
+					curr_state = sMainMenu;
+					rtc_state = 0;
+					break;
+				}
+				}
+
+				break;
+			}
+
+			case sRtcDateConfig: {
+
+				/*get date, month, day , year info and configure RTC */
+
+				/*take care of invalid entries */
+				switch (rtc_state) {
+				case DATE_CONFIG: {
+					uint8_t d = getnumber(cmd->payload, cmd->len);
+					date.Date = d;
+					rtc_state = MONTH_CONFIG;
+					xQueueSend(q_print, &msg_rtc_mo, portMAX_DELAY);
+					break;
+				}
+				case MONTH_CONFIG: {
+					uint8_t month = getnumber(cmd->payload, cmd->len);
+					date.Month = month;
+					rtc_state = DAY_CONFIG;
+					xQueueSend(q_print, &msg_rtc_dow, portMAX_DELAY);
+					break;
+				}
+				case DAY_CONFIG: {
+					uint8_t day = getnumber(cmd->payload, cmd->len);
+					date.WeekDay = day;
+					rtc_state = YEAR_CONFIG;
+					xQueueSend(q_print, &msg_rtc_yr, portMAX_DELAY);
+					break;
+				}
+				case YEAR_CONFIG: {
+					uint8_t year = getnumber(cmd->payload, cmd->len);
+					date.Year = year;
+
+					if (!validate_rtc_information(NULL, &date)) {
+						rtc_configure_date(&date);
+						xQueueSend(q_print, &msg_conf, portMAX_DELAY);
+						show_time_date();
+					} else
+						xQueueSend(q_print, &msg_inv, portMAX_DELAY);
+
+					curr_state = sMainMenu;
+					rtc_state = 0;
+					break;
+				}
+				}
+
+				break;
+			}
+
+			case sRtcReport: {
+				/*enable or disable RTC current time reporting over ITM printf */
+				if (cmd->len == 1) {
+					if (cmd->payload[0] == 'y') {
+						if (xTimerIsTimerActive(rtc_timer) == pdFALSE)
+							xTimerStart(rtc_timer, portMAX_DELAY);
+					} else if (cmd->payload[0] == 'n') {
+						xTimerStop(rtc_timer, portMAX_DELAY);
+					} else {
+						xQueueSend(q_print, &msg_inv, portMAX_DELAY);
+					}
+
+				} else
+					xQueueSend(q_print, &msg_inv, portMAX_DELAY);
+
+				curr_state = sMainMenu;
+				break;
+			}
+
+			} // switch end
+
+		} //while end
+
+		/*Notify menu task */
+		xTaskNotify(handle_menu_task, 0, eNoAction);
+
+	}
+
+}
+
+void print_task(void *param) {
+
+	uint32_t *msg;
+	while (1) {
+		xQueueReceive(q_print, &msg, portMAX_DELAY);
+		HAL_UART_Transmit(&huart2, (uint8_t*) msg, strlen((char*) msg),
+		HAL_MAX_DELAY);
+	}
+}
+
+void cmd_handler_task(void *param) {
+	BaseType_t return_value;
+	command_t cmd;
+
+	while (1) {
+		/*Implement notify wait to get blocked if there is no command from user*/
+		return_value = xTaskNotifyWait(0, 0, NULL, portMAX_DELAY);
+
+		if (return_value == pdTRUE) {
+			//lets extract the command //
+
+			uint8_t item;
+			BaseType_t status;
+
+			status = uxQueueMessagesWaiting(q_data);
+			if (!status)
+				break;
+
+			uint8_t i = 0;
+			do {
+				status = xQueueReceive(q_data, &item, 0);
+				if (status == pdTRUE) {
+					cmd.payload[i++] = item;
+				}
+			} while (item != '\n');
+
+			cmd.payload[i - 1] = '\0';
+			/*save  length of the command excluding null char */
+			cmd.len = i - 1;
+
+			// lets process the command now//
+			switch (curr_state) {
+
+			case sMainMenu:
+				xTaskNotify(handle_menu_task, (uint32_t )&cmd,
+						eSetValueWithOverwrite);
+				break;
+
+			case sLedEffect:
+				xTaskNotify(handle_led_task, (uint32_t )&cmd,
+						eSetValueWithOverwrite);
+				break;
+
+			case sRtcMenu:
+			case sRtcTimeConfig:
+			case sRtcDateConfig:
+			case sRtcReport:
+				xTaskNotify(handle_rtc_task, (uint32_t )&cmd,
+						eSetValueWithOverwrite);
+				break;
+
+			}
+
+		}
+
+	}
+
+}
+
+/* USER CODE END 0 */
+
+/**
+ * @brief  The application entry point.
+ * @retval int
+ */
+int main(void) {
+	/* USER CODE BEGIN 1 */
+
+	/* USER CODE END 1 */
+
+	/* MCU Configuration--------------------------------------------------------*/
+
+	/* Reset of all peripherals, Initializes the Flash interface and the Systick. */
+	HAL_Init();
+
+	/* USER CODE BEGIN Init */
+
+	/* USER CODE END Init */
+
+	/* Configure the system clock */
+	SystemClock_Config();
+
+	/* USER CODE BEGIN SysInit */
+
+	/* USER CODE END SysInit */
+
+	/* Initialize all configured peripherals */
+	MX_GPIO_Init();
+	MX_RTC_Init();
+	MX_USART2_UART_Init();
+	/* USER CODE BEGIN 2 */
+	BaseType_t status;
+
+	/* xTaskCreate(function,   name,    stack,   parameter,  priority,  handle);
+	 ↑          ↑        ↑           ↑           ↑         ↑
+	 what to    debug    how much    data to    who runs   task ID
+	 run       name      RAM        pass in     first    (optional)  */
+	status = xTaskCreate(menu_task, "menu_task", 250, NULL, 2,
+			&handle_menu_task);
+	configASSERT(status == pdPASS);
+
+	status = xTaskCreate(cmd_handler_task, "cmd_task", 250, NULL, 2,
+			&handle_cmd_task);
+	configASSERT(status == pdPASS);
+
+	status = xTaskCreate(print_task, "print_task", 250, NULL, 2,
+			&handle_print_task);
+	configASSERT(status == pdPASS);
+
+	status = xTaskCreate(led_task, "led_task", 250, NULL, 2, &handle_led_task);
+	configASSERT(status == pdPASS);
+
+	status = xTaskCreate(rtc_task, "rtc_task", 250, NULL, 2, &handle_rtc_task);
+	configASSERT(status == pdPASS);
+
+	q_data = xQueueCreate(10, sizeof(char));
+	configASSERT(q_data != NULL);
+
+	q_print = xQueueCreate(10, sizeof(size_t));
+	configASSERT(q_print != NULL);
+
+	//create software timers for led effects//
+	for (int i = 0; i < 4; i++) {
+		handle_led_timer[i] = xTimerCreate("LED_TIMER", pdMS_TO_TICKS(500),
+		pdTRUE, (void*) (i + 1), led_effect_callback);
+	}
+
+	HAL_UART_Receive_IT(&huart2, (uint8_t*) &user_data, 1);
+
+	vTaskStartScheduler();
+
+	/* USER CODE END 2 */
+
+	/* Infinite loop */
+	/* USER CODE BEGIN WHILE */
+	while (1) {
+		/* USER CODE END WHILE */
+
+		/* USER CODE BEGIN 3 */
+	}
+	/* USER CODE END 3 */
+}
+
+/**
+ * @brief System Clock Configuration
+ * @retval None
+ */
+void SystemClock_Config(void) {
+	RCC_OscInitTypeDef RCC_OscInitStruct = { 0 };
+	RCC_ClkInitTypeDef RCC_ClkInitStruct = { 0 };
+
+	/** Configure the main internal regulator output voltage
+	 */
+	__HAL_RCC_PWR_CLK_ENABLE();
+	__HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE1);
+
+	/** Initializes the RCC Oscillators according to the specified parameters
+	 * in the RCC_OscInitTypeDef structure.
+	 */
+	RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI
+			| RCC_OSCILLATORTYPE_LSI;
+	RCC_OscInitStruct.HSIState = RCC_HSI_ON;
+	RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
+	RCC_OscInitStruct.LSIState = RCC_LSI_ON;
+	RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
+	RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSI;
+	RCC_OscInitStruct.PLL.PLLM = 8;
+	RCC_OscInitStruct.PLL.PLLN = 168;
+	RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV2;
+	RCC_OscInitStruct.PLL.PLLQ = 7;
+	if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK) {
+		Error_Handler();
+	}
+
+	/** Initializes the CPU, AHB and APB buses clocks
+	 */
+	RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK | RCC_CLOCKTYPE_SYSCLK
+			| RCC_CLOCKTYPE_PCLK1 | RCC_CLOCKTYPE_PCLK2;
+	RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
+	RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
+	RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV4;
+	RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV2;
+
+	if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_5) != HAL_OK) {
+		Error_Handler();
+	}
+}
+
+/**
+ * @brief RTC Initialization Function
+ * @param None
+ * @retval None
+ */
+static void MX_RTC_Init(void) {
+
+	/* USER CODE BEGIN RTC_Init 0 */
+
+	/* USER CODE END RTC_Init 0 */
+
+	/* USER CODE BEGIN RTC_Init 1 */
+
+	/* USER CODE END RTC_Init 1 */
+
+	/** Initialize RTC Only
+	 */
+	hrtc.Instance = RTC;
+	hrtc.Init.HourFormat = RTC_HOURFORMAT_12;
+	hrtc.Init.AsynchPrediv = 127;
+	hrtc.Init.SynchPrediv = 255;
+	hrtc.Init.OutPut = RTC_OUTPUT_DISABLE;
+	hrtc.Init.OutPutPolarity = RTC_OUTPUT_POLARITY_HIGH;
+	hrtc.Init.OutPutType = RTC_OUTPUT_TYPE_OPENDRAIN;
+	if (HAL_RTC_Init(&hrtc) != HAL_OK) {
+		Error_Handler();
+	}
+	/* USER CODE BEGIN RTC_Init 2 */
+
+	/* USER CODE END RTC_Init 2 */
+
+}
+
+/**
+ * @brief USART2 Initialization Function
+ * @param None
+ * @retval None
+ */
+static void MX_USART2_UART_Init(void) {
+
+	/* USER CODE BEGIN USART2_Init 0 */
+
+	/* USER CODE END USART2_Init 0 */
+
+	/* USER CODE BEGIN USART2_Init 1 */
+
+	/* USER CODE END USART2_Init 1 */
+	huart2.Instance = USART2;
+	huart2.Init.BaudRate = 115200;
+	huart2.Init.WordLength = UART_WORDLENGTH_8B;
+	huart2.Init.StopBits = UART_STOPBITS_1;
+	huart2.Init.Parity = UART_PARITY_NONE;
+	huart2.Init.Mode = UART_MODE_TX_RX;
+	huart2.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+	huart2.Init.OverSampling = UART_OVERSAMPLING_16;
+	if (HAL_UART_Init(&huart2) != HAL_OK) {
+		Error_Handler();
+	}
+	/* USER CODE BEGIN USART2_Init 2 */
+
+	/* USER CODE END USART2_Init 2 */
+
+}
+
+/**
+ * @brief GPIO Initialization Function
+ * @param None
+ * @retval None
+ */
+static void MX_GPIO_Init(void) {
+	GPIO_InitTypeDef GPIO_InitStruct = { 0 };
+	/* USER CODE BEGIN MX_GPIO_Init_1 */
+	/* USER CODE END MX_GPIO_Init_1 */
+
+	/* GPIO Ports Clock Enable */
+	__HAL_RCC_GPIOE_CLK_ENABLE();
+	__HAL_RCC_GPIOC_CLK_ENABLE();
+	__HAL_RCC_GPIOH_CLK_ENABLE();
+	__HAL_RCC_GPIOA_CLK_ENABLE();
+	__HAL_RCC_GPIOB_CLK_ENABLE();
+	__HAL_RCC_GPIOD_CLK_ENABLE();
+
+	/*Configure GPIO pin Output Level */
+	HAL_GPIO_WritePin(CS_I2C_SPI_GPIO_Port, CS_I2C_SPI_Pin, GPIO_PIN_RESET);
+
+	/*Configure GPIO pin Output Level */
+	HAL_GPIO_WritePin(OTG_FS_PowerSwitchOn_GPIO_Port, OTG_FS_PowerSwitchOn_Pin,
+			GPIO_PIN_SET);
+
+	/*Configure GPIO pin Output Level */
+	HAL_GPIO_WritePin(GPIOD,
+	LD4_Pin | LD3_Pin | LD5_Pin | GPIO_PIN_15 | Audio_RST_Pin, GPIO_PIN_RESET);
+
+	/*Configure GPIO pin : CS_I2C_SPI_Pin */
+	GPIO_InitStruct.Pin = CS_I2C_SPI_Pin;
+	GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+	GPIO_InitStruct.Pull = GPIO_NOPULL;
+	GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+	HAL_GPIO_Init(CS_I2C_SPI_GPIO_Port, &GPIO_InitStruct);
+
+	/*Configure GPIO pin : OTG_FS_PowerSwitchOn_Pin */
+	GPIO_InitStruct.Pin = OTG_FS_PowerSwitchOn_Pin;
+	GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+	GPIO_InitStruct.Pull = GPIO_NOPULL;
+	GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+	HAL_GPIO_Init(OTG_FS_PowerSwitchOn_GPIO_Port, &GPIO_InitStruct);
+
+	/*Configure GPIO pin : PDM_OUT_Pin */
+	GPIO_InitStruct.Pin = PDM_OUT_Pin;
+	GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
+	GPIO_InitStruct.Pull = GPIO_NOPULL;
+	GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+	GPIO_InitStruct.Alternate = GPIO_AF5_SPI2;
+	HAL_GPIO_Init(PDM_OUT_GPIO_Port, &GPIO_InitStruct);
+
+	/*Configure GPIO pin : B1_Pin */
+	GPIO_InitStruct.Pin = B1_Pin;
+	GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
+	GPIO_InitStruct.Pull = GPIO_NOPULL;
+	HAL_GPIO_Init(B1_GPIO_Port, &GPIO_InitStruct);
+
+	/*Configure GPIO pin : I2S3_WS_Pin */
+	GPIO_InitStruct.Pin = I2S3_WS_Pin;
+	GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
+	GPIO_InitStruct.Pull = GPIO_NOPULL;
+	GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+	GPIO_InitStruct.Alternate = GPIO_AF6_SPI3;
+	HAL_GPIO_Init(I2S3_WS_GPIO_Port, &GPIO_InitStruct);
+
+	/*Configure GPIO pins : SPI1_SCK_Pin SPI1_MISO_Pin SPI1_MOSI_Pin */
+	GPIO_InitStruct.Pin = SPI1_SCK_Pin | SPI1_MISO_Pin | SPI1_MOSI_Pin;
+	GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
+	GPIO_InitStruct.Pull = GPIO_NOPULL;
+	GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+	GPIO_InitStruct.Alternate = GPIO_AF5_SPI1;
+	HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
+	/*Configure GPIO pin : BOOT1_Pin */
+	GPIO_InitStruct.Pin = BOOT1_Pin;
+	GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+	GPIO_InitStruct.Pull = GPIO_NOPULL;
+	HAL_GPIO_Init(BOOT1_GPIO_Port, &GPIO_InitStruct);
+
+	/*Configure GPIO pin : CLK_IN_Pin */
+	GPIO_InitStruct.Pin = CLK_IN_Pin;
+	GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
+	GPIO_InitStruct.Pull = GPIO_NOPULL;
+	GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+	GPIO_InitStruct.Alternate = GPIO_AF5_SPI2;
+	HAL_GPIO_Init(CLK_IN_GPIO_Port, &GPIO_InitStruct);
+
+	/*Configure GPIO pins : LD4_Pin LD3_Pin LD5_Pin PD15
+	 Audio_RST_Pin */
+	GPIO_InitStruct.Pin = LD4_Pin | LD3_Pin | LD5_Pin | GPIO_PIN_15
+			| Audio_RST_Pin;
+	GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+	GPIO_InitStruct.Pull = GPIO_NOPULL;
+	GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+	HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
+
+	/*Configure GPIO pins : I2S3_MCK_Pin I2S3_SCK_Pin I2S3_SD_Pin */
+	GPIO_InitStruct.Pin = I2S3_MCK_Pin | I2S3_SCK_Pin | I2S3_SD_Pin;
+	GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
+	GPIO_InitStruct.Pull = GPIO_NOPULL;
+	GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+	GPIO_InitStruct.Alternate = GPIO_AF6_SPI3;
+	HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
+
+	/*Configure GPIO pin : VBUS_FS_Pin */
+	GPIO_InitStruct.Pin = VBUS_FS_Pin;
+	GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+	GPIO_InitStruct.Pull = GPIO_NOPULL;
+	HAL_GPIO_Init(VBUS_FS_GPIO_Port, &GPIO_InitStruct);
+
+	/*Configure GPIO pins : OTG_FS_ID_Pin OTG_FS_DM_Pin OTG_FS_DP_Pin */
+	GPIO_InitStruct.Pin = OTG_FS_ID_Pin | OTG_FS_DM_Pin | OTG_FS_DP_Pin;
+	GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
+	GPIO_InitStruct.Pull = GPIO_NOPULL;
+	GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+	GPIO_InitStruct.Alternate = GPIO_AF10_OTG_FS;
+	HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
+	/*Configure GPIO pin : OTG_FS_OverCurrent_Pin */
+	GPIO_InitStruct.Pin = OTG_FS_OverCurrent_Pin;
+	GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+	GPIO_InitStruct.Pull = GPIO_NOPULL;
+	HAL_GPIO_Init(OTG_FS_OverCurrent_GPIO_Port, &GPIO_InitStruct);
+
+	/*Configure GPIO pins : Audio_SCL_Pin Audio_SDA_Pin */
+	GPIO_InitStruct.Pin = Audio_SCL_Pin | Audio_SDA_Pin;
+	GPIO_InitStruct.Mode = GPIO_MODE_AF_OD;
+	GPIO_InitStruct.Pull = GPIO_NOPULL;
+	GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+	GPIO_InitStruct.Alternate = GPIO_AF4_I2C1;
+	HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+
+	/*Configure GPIO pin : MEMS_INT2_Pin */
+	GPIO_InitStruct.Pin = MEMS_INT2_Pin;
+	GPIO_InitStruct.Mode = GPIO_MODE_EVT_RISING;
+	GPIO_InitStruct.Pull = GPIO_NOPULL;
+	HAL_GPIO_Init(MEMS_INT2_GPIO_Port, &GPIO_InitStruct);
+
+	/* USER CODE BEGIN MX_GPIO_Init_2 */
+	/* USER CODE END MX_GPIO_Init_2 */
+}
+
+/* USER CODE BEGIN 4 */
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
+	uint8_t temp;
+
+	for (uint32_t i = 0; i < 4000; i++)
+		;
+
+	if (!xQueueIsQueueFullFromISR(q_data)) {
+		// enqueue data in queue//
+		xQueueSendFromISR(q_data, (void* )&user_data, NULL);
+
+	} else {
+		// to make to last byte should contain \n refill again with the data
+		xQueueReceiveFromISR(q_data, (void*) &temp, NULL);
+		xQueueSendFromISR(q_data, (void* )&user_data, NULL);
+
+	}
+
+	//send notification if we got \n only from user//
+	if (user_data == '\n') {
+		xTaskNotifyFromISR(handle_cmd_task, 0, eNoAction, NULL);
+	}
+
+	/* Enable UART data byte reception again in IT mode for next data*/
+	HAL_UART_Receive_IT(&huart2, (uint8_t*) &user_data, 1);
+
+}
+
+/* USER CODE END 4 */
+
+/**
+ * @brief  Period elapsed callback in non blocking mode
+ * @note   This function is called  when TIM6 interrupt took place, inside
+ * HAL_TIM_IRQHandler(). It makes a direct call to HAL_IncTick() to increment
+ * a global variable "uwTick" used as application time base.
+ * @param  htim : TIM handle
+ * @retval None
+ */
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
+	/* USER CODE BEGIN Callback 0 */
+
+	/* USER CODE END Callback 0 */
+	if (htim->Instance == TIM6) {
+		HAL_IncTick();
+	}
+	/* USER CODE BEGIN Callback 1 */
+
+	/* USER CODE END Callback 1 */
+}
+
+/**
+ * @brief  This function is executed in case of error occurrence.
+ * @retval None
+ */
+void Error_Handler(void) {
+	/* USER CODE BEGIN Error_Handler_Debug */
+	/* User can add his own implementation to report the HAL error return state */
+	__disable_irq();
+	while (1) {
+	}
+	/* USER CODE END Error_Handler_Debug */
+}
+
+#ifdef  USE_FULL_ASSERT
+/**
+  * @brief  Reports the name of the source file and the source line number
+  *         where the assert_param error has occurred.
+  * @param  file: pointer to the source file name
+  * @param  line: assert_param error line source number
+  * @retval None
+  */
+void assert_failed(uint8_t *file, uint32_t line)
+{
+  /* USER CODE BEGIN 6 */
+  /* User can add his own implementation to report the file name and line number,
+     ex: printf("Wrong parameters value: file %s on line %d\r\n", file, line) */
+  /* USER CODE END 6 */
+}
+#endif /* USE_FULL_ASSERT */
