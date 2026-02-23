@@ -1,0 +1,11 @@
+../Core/Src/main.c:77:6:vApplicationStackOverflowHook	1
+../Core/Src/main.c:88:6:vApplicationMallocFailedHook	1
+../Core/Src/main.c:130:13:vPrint	1
+../Core/Src/main.c:147:13:vTask1	2
+../Core/Src/main.c:192:13:vTask2	2
+../Core/Src/main.c:235:5:main	1
+../Core/Src/main.c:288:6:SystemClock_Config	3
+../Core/Src/main.c:332:13:MX_USART2_UART_Init	2
+../Core/Src/main.c:363:13:MX_GPIO_Init	1
+../Core/Src/main.c:512:6:HAL_TIM_PeriodElapsedCallback	2
+../Core/Src/main.c:528:6:Error_Handler	1
