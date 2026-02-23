@@ -1,0 +1,1318 @@
+/* USER CODE BEGIN Header */
+/**
+ ******************************************************************************
+ * @file           : main.c
+ * @brief          : FreeRTOS Menu-Driven Application for STM32F4 Discovery
+ *
+ * @description    : Interactive UART menu system with three features:
+ *                   1. LED effects  — four toggle patterns on PD12-PD15
+ *                   2. RTC config   — set time, date, enable periodic report
+ *                   3. Exit         — placeholder for shutdown logic
+ *
+ *                   Architecture:
+ *                   +-----------+  notify   +------------+  notify   +---------+
+ *                   | UART ISR  +---------->+  cmd_task   +---------->+ menu /  |
+ *                   | (byte)    |  q_rx     | (parse)     |  (ptr)    | led/rtc |
+ *                   +-----------+           +------------+           +---------+
+ *                                                                        |
+ *                                                                   q_print
+ *                                                                        v
+ *                                                                  +---------+
+ *                                                                  |  print  |
+ *                                                                  | (UART)  |
+ *                                                                  +---------+
+ *
+ * @attention
+ *
+ * Copyright (c) 2026 STMicroelectronics.
+ * All rights reserved.
+ *
+ * This software is licensed under terms that can be found in the LICENSE file
+ * in the root directory of this software component.
+ * If no LICENSE file comes with this software, it is provided AS-IS.
+ *
+ ******************************************************************************
+ */
+/* USER CODE END Header */
+
+/* Includes ------------------------------------------------------------------*/
+#include "main.h"
+
+/* Private includes ----------------------------------------------------------*/
+/* USER CODE BEGIN Includes */
+#include <string.h>                /* memset, strcmp, strlen                   */
+#include <stdio.h>                 /* printf, sprintf                         */
+#include "FreeRTOS.h"              /* Core FreeRTOS definitions               */
+#include "task.h"                  /* xTaskCreate, xTaskNotify, etc.          */
+#include "queue.h"                 /* xQueueCreate, xQueueSend, etc.         */
+#include "timers.h"                /* xTimerCreate, xTimerStart, etc.        */
+/* USER CODE END Includes */
+
+/* Private typedef -----------------------------------------------------------*/
+/* USER CODE BEGIN PTD */
+
+/**
+ * @brief  Command packet received from the UART.
+ *         The ISR fills queue_uart_rx one byte at a time; task_cmd_handler
+ *         reassembles those bytes into this structure.
+ */
+typedef struct {
+    uint8_t  payload[10];          /* ASCII characters (null-terminated)      */
+    uint32_t length;               /* Number of valid chars (excl. '\0')      */
+} uart_command_t;
+
+/**
+ * @brief  Application state machine states.
+ *         Only ONE state is active at any time; it decides which task
+ *         receives the next parsed command from task_cmd_handler.
+ */
+typedef enum {
+    STATE_MAIN_MENU = 0,           /* Top-level menu is displayed             */
+    STATE_LED_EFFECT,              /* Waiting for LED effect selection        */
+    STATE_RTC_MENU,                /* RTC sub-menu is displayed               */
+    STATE_RTC_TIME_CONFIG,         /* Collecting hh:mm:ss from user           */
+    STATE_RTC_DATE_CONFIG,         /* Collecting dd/mm/dow/yy from user       */
+    STATE_RTC_REPORT,              /* Waiting for y/n to toggle reporting     */
+} app_state_t;
+
+/* USER CODE END PTD */
+
+/* Private define ------------------------------------------------------------*/
+/* USER CODE BEGIN PD */
+
+/* ---------- Sub-state indices for multi-step RTC time entry --------------- */
+#define RTC_TIME_STEP_HOUR      0  /* First prompt  : enter hours             */
+#define RTC_TIME_STEP_MINUTE    1  /* Second prompt : enter minutes            */
+#define RTC_TIME_STEP_SECOND    2  /* Third prompt  : enter seconds            */
+#define RTC_TIME_STEP_AMPM      3  /* Fourth prompt : enter AM(0) or PM(1)    */
+
+/* ---------- Sub-state indices for multi-step RTC date entry --------------- */
+#define RTC_DATE_STEP_DAY       0  /* First prompt  : enter day of month      */
+#define RTC_DATE_STEP_MONTH     1  /* Second prompt : enter month              */
+#define RTC_DATE_STEP_WEEKDAY   2  /* Third prompt  : enter weekday (1=Sun)    */
+#define RTC_DATE_STEP_YEAR      3  /* Fourth prompt : enter year (0-99)        */
+
+/* ---------- Number of LEDs on the Discovery board (PD12-PD15) ------------ */
+#define LED_COUNT               4
+
+/* USER CODE END PD */
+
+/* Private macro -------------------------------------------------------------*/
+/* USER CODE BEGIN PM */
+/* (none) */
+/* USER CODE END PM */
+
+/* Private variables ---------------------------------------------------------*/
+RTC_HandleTypeDef  hrtc;           /* RTC peripheral handle (CubeMX)         */
+UART_HandleTypeDef huart2;         /* USART2 peripheral handle (CubeMX)      */
+
+/* USER CODE BEGIN PV */
+
+/* ========================== Task Handles ================================= */
+static TaskHandle_t  task_handle_cmd;       /* Command parser task           */
+static TaskHandle_t  task_handle_menu;      /* Main menu task                */
+static TaskHandle_t  task_handle_print;     /* UART transmit task            */
+static TaskHandle_t  task_handle_led;       /* LED effect task               */
+static TaskHandle_t  task_handle_rtc;       /* RTC configuration task        */
+
+/* ========================== Queue Handles ================================ */
+static QueueHandle_t queue_uart_rx;         /* Raw bytes from UART ISR       */
+static QueueHandle_t queue_print;           /* String pointers -> print_task */
+
+/* ========================== Timer Handles ================================ */
+static TimerHandle_t timer_led[LED_COUNT];  /* One software timer per effect */
+static TimerHandle_t timer_rtc_report;      /* Periodic RTC report timer     */
+
+/* ========================== Shared State ================================= */
+static volatile uint8_t     uart_rx_byte;   /* Single-byte ISR receive buf   */
+static volatile app_state_t current_state = STATE_MAIN_MENU;  /* FSM state  */
+static volatile int         led_toggle_phase = 0; /* Alternates 0/1 each cb */
+
+/* ========================== Constant Strings ============================= */
+static const char *MSG_INVALID = "\r\n  [!] Invalid input. Please try again.\r\n";
+
+/* USER CODE END PV */
+
+/* Private function prototypes -----------------------------------------------*/
+void SystemClock_Config(void);
+static void MX_GPIO_Init(void);
+static void MX_RTC_Init(void);
+static void MX_USART2_UART_Init(void);
+
+/* USER CODE BEGIN PFP */
+
+/* --- FreeRTOS task entry points --- */
+static void task_main_menu(void *param);
+static void task_led_effect(void *param);
+static void task_rtc_config(void *param);
+static void task_print(void *param);
+static void task_cmd_handler(void *param);
+
+/* --- RTC helpers --- */
+static void     rtc_show_on_uart(void);
+static void     rtc_show_on_itm(void);
+static void     rtc_apply_time(RTC_TimeTypeDef *time);
+static void     rtc_apply_date(RTC_DateTypeDef *date);
+static int      rtc_validate(const RTC_TimeTypeDef *time,
+                             const RTC_DateTypeDef *date);
+
+/* --- Utility --- */
+static uint8_t  ascii_to_number(const uint8_t *buf, int len);
+
+/* --- LED helpers --- */
+static void     led_write_pattern(uint8_t pattern);
+static void     led_stop_all_timers(void);
+
+/* --- Timer callbacks --- */
+static void     callback_led_effect(TimerHandle_t xTimer);
+static void     callback_rtc_report(TimerHandle_t xTimer);
+
+/* USER CODE END PFP */
+
+/* Private user code ---------------------------------------------------------*/
+/* USER CODE BEGIN 0 */
+
+/* =========================================================================
+ *  FREERTOS HOOK FUNCTIONS
+ *  Called automatically by the kernel on error conditions.
+ * ========================================================================= */
+
+/**
+ * @brief  Called when a task exceeds its allocated stack.
+ * @param  xTask      Handle of the offending task.
+ * @param  pcTaskName Human-readable name of the offending task.
+ * @note   Spins forever so the debugger can catch it.
+ */
+void vApplicationStackOverflowHook(TaskHandle_t xTask, char *pcTaskName)
+{
+    (void)xTask;                   /* Suppress unused-variable warning        */
+    (void)pcTaskName;              /* Inspect this in the debugger            */
+    for (;;);                      /* Halt -- attach debugger to diagnose     */
+}
+
+/**
+ * @brief  Called when pvPortMalloc() fails (heap exhausted).
+ * @note   Increase configTOTAL_HEAP_SIZE in FreeRTOSConfig.h if this fires.
+ */
+void vApplicationMallocFailedHook(void)
+{
+    for (;;);                      /* Halt -- heap is full                    */
+}
+
+/* =========================================================================
+ *  LED GPIO PIN MAP
+ *  PD12 = green, PD13 = orange, PD14 = red, PD15 = blue
+ * ========================================================================= */
+static const uint16_t LED_PINS[LED_COUNT] = {
+    GPIO_PIN_12, GPIO_PIN_13, GPIO_PIN_14, GPIO_PIN_15
+};
+
+/* =========================================================================
+ *  LED HELPER FUNCTIONS
+ * ========================================================================= */
+
+/**
+ * @brief  Write all four LEDs at once using a 4-bit pattern.
+ *         Bit 0 -> PD12, Bit 1 -> PD13, Bit 2 -> PD14, Bit 3 -> PD15.
+ *         1 = ON, 0 = OFF.
+ * @param  pattern  4-bit value controlling each LED.
+ */
+static void led_write_pattern(uint8_t pattern)
+{
+    for (int i = 0; i < LED_COUNT; i++) {
+        GPIO_PinState state = (pattern & (1 << i)) ? GPIO_PIN_SET
+                                                    : GPIO_PIN_RESET;
+        HAL_GPIO_WritePin(GPIOD, LED_PINS[i], state);
+    }
+}
+
+/**
+ * @brief  Stop all four LED effect software timers.
+ *         Call this before starting a new effect to ensure only one runs.
+ */
+static void led_stop_all_timers(void)
+{
+    for (int i = 0; i < LED_COUNT; i++) {
+        xTimerStop(timer_led[i], portMAX_DELAY);
+    }
+}
+
+/* =========================================================================
+ *  TIMER CALLBACKS
+ * ========================================================================= */
+
+/**
+ * @brief  Software timer callback that drives LED effects.
+ *
+ *         Each of the four timers carries a unique ID (1-4) set via
+ *         pvTimerGetTimerID().  The ID selects the blink pattern.
+ *         led_toggle_phase alternates between two complementary patterns
+ *         on each tick.
+ *
+ *         Effect patterns (PD12 PD13 PD14 PD15):
+ *           Effect 1: all on  / all off           (simultaneous blink)
+ *           Effect 2: 1 0 1 0 / 0 1 0 1           (alternate pairs)
+ *           Effect 3: 1 1 0 0 / 0 0 1 1           (top-bottom swap)
+ *           Effect 4: 0 1 1 0 / 1 0 0 1           (cross pattern)
+ *
+ * @param  xTimer  Handle of the timer that expired.
+ */
+static void callback_led_effect(TimerHandle_t xTimer)
+{
+    /* Retrieve effect ID (1-4) stored when the timer was created */
+    int effect_id = (int)(uint32_t)pvTimerGetTimerID(xTimer);
+
+    /* Two complementary 4-bit patterns per effect: [phase0, phase1] */
+    static const uint8_t patterns[4][2] = {
+        { 0x0F, 0x00 },           /* Effect 1: all on    <-> all off         */
+        { 0x05, 0x0A },           /* Effect 2: 12,14 on  <-> 13,15 on       */
+        { 0x03, 0x0C },           /* Effect 3: 12,13 on  <-> 14,15 on       */
+        { 0x06, 0x09 },           /* Effect 4: 13,14 on  <-> 12,15 on       */
+    };
+
+    /* Bounds-check the effect ID (must be 1-4) */
+    if (effect_id < 1 || effect_id > LED_COUNT) return;
+
+    /* Write the current phase pattern, then flip the phase flag */
+    led_write_pattern(patterns[effect_id - 1][led_toggle_phase]);
+    led_toggle_phase ^= 1;        /* Toggle between 0 and 1                  */
+}
+
+/**
+ * @brief  Periodic timer callback that prints current RTC time via ITM/SWO.
+ * @param  xTimer  (unused) Handle of the expired timer.
+ */
+static void callback_rtc_report(TimerHandle_t xTimer)
+{
+    (void)xTimer;
+    rtc_show_on_itm();             /* Print time to SWO debug console         */
+}
+
+/* =========================================================================
+ *  UTILITY FUNCTIONS
+ * ========================================================================= */
+
+/**
+ * @brief  Convert 1- or 2-digit ASCII string to a binary number.
+ * @param  buf  Pointer to ASCII digit(s), e.g. "09" or "5".
+ * @param  len  Number of characters (1 or 2).
+ * @return Numeric value (0-99).
+ */
+static uint8_t ascii_to_number(const uint8_t *buf, int len)
+{
+    if (len > 1) {
+        return (uint8_t)(((buf[0] - '0') * 10) + (buf[1] - '0'));
+    }
+    return (uint8_t)(buf[0] - '0');
+}
+
+/* =========================================================================
+ *  RTC HELPER FUNCTIONS
+ * ========================================================================= */
+
+/**
+ * @brief  Print current RTC time and date via ITM/SWO (printf).
+ *         Used by the periodic report timer callback.
+ */
+static void rtc_show_on_itm(void)
+{
+    RTC_TimeTypeDef rtc_time = {0};
+    RTC_DateTypeDef rtc_date = {0};
+
+    /* Must read time BEFORE date -- STM32 RTC latches date on time read */
+    HAL_RTC_GetTime(&hrtc, &rtc_time, RTC_FORMAT_BIN);
+    HAL_RTC_GetDate(&hrtc, &rtc_date, RTC_FORMAT_BIN);
+
+    /* Determine AM/PM string */
+    const char *ampm = (rtc_time.TimeFormat == RTC_HOURFORMAT12_AM)
+                       ? "AM" : "PM";
+
+    /* Print formatted time and date to ITM console */
+    printf("%02d:%02d:%02d [%s]\t%02d-%02d-%04d\n",
+           rtc_time.Hours, rtc_time.Minutes, rtc_time.Seconds, ampm,
+           rtc_date.Month, rtc_date.Date, 2000 + rtc_date.Year);
+}
+
+/**
+ * @brief  Print current RTC time and date over UART via the print queue.
+ *         Uses static buffers so the pointer remains valid until consumed.
+ */
+static void rtc_show_on_uart(void)
+{
+    /* Static buffers survive after this function returns */
+    static char time_buf[40];
+    static char date_buf[40];
+    static char *time_ptr = time_buf;
+    static char *date_ptr = date_buf;
+
+    RTC_TimeTypeDef rtc_time = {0};
+    RTC_DateTypeDef rtc_date = {0};
+
+    /* Must read time BEFORE date -- STM32 RTC latches date on time read */
+    HAL_RTC_GetTime(&hrtc, &rtc_time, RTC_FORMAT_BIN);
+    HAL_RTC_GetDate(&hrtc, &rtc_date, RTC_FORMAT_BIN);
+
+    /* Determine AM/PM string */
+    const char *ampm = (rtc_time.TimeFormat == RTC_HOURFORMAT12_AM)
+                       ? "AM" : "PM";
+
+    /* Format and enqueue time string */
+    sprintf(time_buf, "\r\n  Current Time : %02d:%02d:%02d [%s]",
+            rtc_time.Hours, rtc_time.Minutes, rtc_time.Seconds, ampm);
+    xQueueSend(queue_print, &time_ptr, portMAX_DELAY);
+
+    /* Format and enqueue date string */
+    sprintf(date_buf, "\r\n  Current Date : %02d-%02d-%04d\r\n",
+            rtc_date.Month, rtc_date.Date, 2000 + rtc_date.Year);
+    xQueueSend(queue_print, &date_ptr, portMAX_DELAY);
+}
+
+/**
+ * @brief  Apply a new time to the RTC hardware.
+ * @param  time  Pointer to time struct with Hours, Minutes, Seconds,
+ *               and TimeFormat (AM/PM) already filled by the caller.
+ */
+static void rtc_apply_time(RTC_TimeTypeDef *time)
+{
+    /* TimeFormat is set by caller (AM or PM) -- do not override it here */
+    time->DayLightSaving = RTC_DAYLIGHTSAVING_NONE;    /* No DST adjustment  */
+    time->StoreOperation = RTC_STOREOPERATION_RESET;   /* Reset store flag   */
+    HAL_RTC_SetTime(&hrtc, time, RTC_FORMAT_BIN);      /* Write to hardware  */
+}
+
+/**
+ * @brief  Apply a new date to the RTC hardware.
+ * @param  date  Pointer to date struct with Date, Month, WeekDay, Year.
+ */
+static void rtc_apply_date(RTC_DateTypeDef *date)
+{
+    HAL_RTC_SetDate(&hrtc, date, RTC_FORMAT_BIN);      /* Write to hardware  */
+}
+
+/**
+ * @brief  Validate RTC time and/or date fields are within legal range.
+ * @param  time  Pointer to time struct (NULL to skip time check).
+ * @param  date  Pointer to date struct (NULL to skip date check).
+ * @return 0 = valid, 1 = one or more fields out of range.
+ */
+static int rtc_validate(const RTC_TimeTypeDef *time,
+                        const RTC_DateTypeDef *date)
+{
+    /* Validate time fields if provided */
+    if (time != NULL) {
+        if (time->Hours > 12 || time->Minutes > 59 || time->Seconds > 59) {
+            return 1;              /* Time out of range                       */
+        }
+    }
+
+    /* Validate date fields if provided */
+    if (date != NULL) {
+        if (date->Date > 31 || date->Month > 12 ||
+            date->WeekDay > 7 || date->Year > 99) {
+            return 1;              /* Date out of range                       */
+        }
+    }
+
+    return 0;                      /* All fields valid                        */
+}
+
+/* =========================================================================
+ *  FREERTOS TASKS
+ * ========================================================================= */
+
+/**
+ * @brief  Main menu task.
+ *
+ *         Displays the top-level menu, waits for a single-digit command,
+ *         and delegates to the LED or RTC task via task notifications.
+ *         After the sub-task finishes, it notifies this task to re-display
+ *         the menu.
+ *
+ * @param  param  (unused)
+ */
+static void task_main_menu(void *param)
+{
+    (void)param;
+
+    uint32_t       notification_value;       /* Holds pointer from notifier  */
+    uart_command_t *cmd;                     /* Points into cmd_handler's buf*/
+
+    const char *msg_menu =
+        "\r\n"
+        "  +------------------------------------+\r\n"
+        "  |     STM32F4 Discovery  v1.0        |\r\n"
+        "  |          MAIN MENU                 |\r\n"
+        "  +------------------------------------+\r\n"
+        "  | [0]  LED Control Panel             |\r\n"
+        "  | [1]  Clock & Calendar Settings     |\r\n"
+        "  | [2]  Exit                          |\r\n"
+        "  +------------------------------------+\r\n"
+        "  Select option >> ";
+
+    for (;;) {
+        /* Display the main menu over UART */
+        xQueueSend(queue_print, &msg_menu, portMAX_DELAY);
+
+        /* Block until cmd_handler sends a parsed command via notification */
+        xTaskNotifyWait(0, 0, &notification_value, portMAX_DELAY);
+        cmd = (uart_command_t *)notification_value;
+
+        if (cmd->length == 1) {
+            int option = cmd->payload[0] - '0';  /* Convert ASCII to int    */
+
+            switch (option) {
+            case 0:
+                /* Hand control to the LED effect task */
+                current_state = STATE_LED_EFFECT;
+                xTaskNotify(task_handle_led, 0, eNoAction);
+                break;
+
+            case 1:
+                /* Hand control to the RTC configuration task */
+                current_state = STATE_RTC_MENU;
+                xTaskNotify(task_handle_rtc, 0, eNoAction);
+                break;
+
+            case 2:
+                /* Exit -- no shutdown action defined yet */
+                break;
+
+            default:
+                /* Unrecognised single digit */
+                xQueueSend(queue_print, &MSG_INVALID, portMAX_DELAY);
+                continue;          /* Re-display menu immediately            */
+            }
+        } else {
+            /* Multi-character input is invalid at the main menu */
+            xQueueSend(queue_print, &MSG_INVALID, portMAX_DELAY);
+            continue;              /* Re-display menu immediately            */
+        }
+
+        /* Block here until the sub-task finishes and notifies us back */
+        xTaskNotifyWait(0, 0, NULL, portMAX_DELAY);
+    }
+}
+
+/**
+ * @brief  LED effect selection task.
+ *
+ *         Waits for a notification from the menu task, shows the LED
+ *         sub-menu, reads the user's choice, starts the corresponding
+ *         software timer, then returns control to the menu.
+ *
+ * @param  param  (unused)
+ */
+static void task_led_effect(void *param)
+{
+    (void)param;
+
+    uint32_t       notification_value;
+    uart_command_t *cmd;
+
+    const char *msg_led =
+        "\r\n"
+        "  +------------------------------------+\r\n"
+        "  |        LED CONTROL PANEL           |\r\n"
+        "  +------------------------------------+\r\n"
+        "  | [1]    Sync Blink   (all toggle)  |\r\n"
+        "  | [2]    Dual Sweep   (alt. pairs)  |\r\n"
+        "  | [3]    Wave Split   (top/bottom)  |\r\n"
+        "  | [4]    Cross Fade   (diagonal)    |\r\n"
+        "  | [none] All LEDs OFF               |\r\n"
+        "  +------------------------------------+\r\n"
+        "  Select effect >> ";
+
+    for (;;) {
+        /* Sleep until the menu task activates us */
+        xTaskNotifyWait(0, 0, NULL, portMAX_DELAY);
+
+        /* Display the LED effect sub-menu */
+        xQueueSend(queue_print, &msg_led, portMAX_DELAY);
+
+        /* Wait for the user's effect choice */
+        xTaskNotifyWait(0, 0, &notification_value, portMAX_DELAY);
+        cmd = (uart_command_t *)notification_value;
+
+        if (cmd->length <= 4) {
+            if (strcmp((char *)cmd->payload, "none") == 0) {
+                /* Turn off all LED effect timers */
+                led_stop_all_timers();
+                /* Force all four LEDs OFF immediately */
+                led_write_pattern(0x00);
+
+            } else if (strcmp((char *)cmd->payload, "1") == 0) {
+                /* Start effect 1: simultaneous blink */
+                led_stop_all_timers();
+                xTimerStart(timer_led[0], portMAX_DELAY);
+
+            } else if (strcmp((char *)cmd->payload, "2") == 0) {
+                /* Start effect 2: alternate pairs */
+                led_stop_all_timers();
+                xTimerStart(timer_led[1], portMAX_DELAY);
+
+            } else if (strcmp((char *)cmd->payload, "3") == 0) {
+                /* Start effect 3: top-bottom swap */
+                led_stop_all_timers();
+                xTimerStart(timer_led[2], portMAX_DELAY);
+
+            } else if (strcmp((char *)cmd->payload, "4") == 0) {
+                /* Start effect 4: cross pattern */
+                led_stop_all_timers();
+                xTimerStart(timer_led[3], portMAX_DELAY);
+
+            } else {
+                /* Recognised length but unknown command string */
+                xQueueSend(queue_print, &MSG_INVALID, portMAX_DELAY);
+            }
+        } else {
+            /* Input too long for any valid LED command */
+            xQueueSend(queue_print, &MSG_INVALID, portMAX_DELAY);
+        }
+
+        /* Return to the main menu */
+        current_state = STATE_MAIN_MENU;
+        xTaskNotify(task_handle_menu, 0, eNoAction);
+    }
+}
+
+/**
+ * @brief  RTC configuration task.
+ *
+ *         Handles the RTC sub-menu with four options:
+ *           0 -- Configure time (hh, mm, ss entered sequentially)
+ *           1 -- Configure date (dd, mm, weekday, yy entered sequentially)
+ *           2 -- Enable/disable periodic time reporting via ITM
+ *           3 -- Exit back to main menu
+ *
+ * @param  param  (unused)
+ */
+static void task_rtc_config(void *param)
+{
+    (void)param;
+
+    /* ---- Constant sub-menu strings ---- */
+    const char *msg_header =
+        "\r\n"
+        "  +------------------------------------+\r\n"
+        "  |      CLOCK & CALENDAR SETTINGS     |\r\n"
+        "  +------------------------------------+\r\n";
+
+    const char *msg_options =
+        "  | [0]  Set Time  (HH:MM:SS AM/PM)   |\r\n"
+        "  | [1]  Set Date  (DD/MM/DOW/YY)     |\r\n"
+        "  | [2]  Live Report on ITM Console    |\r\n"
+        "  | [3]  Back to Main Menu             |\r\n"
+        "  +------------------------------------+\r\n"
+        "  Select option >> ";
+
+    const char *msg_enter_hour    = "  Hour (1-12)    : ";
+    const char *msg_enter_minute  = "  Minutes (0-59) : ";
+    const char *msg_enter_second  = "  Seconds (0-59) : ";
+    const char *msg_enter_ampm    = "  AM=0 / PM=1    : ";
+    const char *msg_enter_day     = "  Day (1-31)     : ";
+    const char *msg_enter_month   = "  Month (1-12)   : ";
+    const char *msg_enter_weekday = "  Weekday (1-7, Sun=1) : ";
+    const char *msg_enter_year    = "  Year (0-99)    : ";
+    const char *msg_success       = "\r\n  [OK] Configuration saved successfully.\r\n";
+    const char *msg_report_prompt = "  Enable live time report on ITM? (y/n) : ";
+
+    uint32_t       notification_value;       /* Holds pointer from notifier  */
+    uart_command_t *cmd;                     /* Parsed command from user     */
+    int            rtc_sub_step = 0;         /* Tracks current config field  */
+
+    RTC_TimeTypeDef new_time;                /* Accumulates time fields      */
+    RTC_DateTypeDef new_date;                /* Accumulates date fields      */
+
+    for (;;) {
+        /* Sleep until the menu task activates us */
+        xTaskNotifyWait(0, 0, NULL, portMAX_DELAY);
+
+        /* Show RTC header, current time/date, and sub-menu options */
+        xQueueSend(queue_print, &msg_header, portMAX_DELAY);
+        rtc_show_on_uart();
+        xQueueSend(queue_print, &msg_options, portMAX_DELAY);
+
+        /* Process commands until we return to the main menu */
+        while (current_state != STATE_MAIN_MENU) {
+
+            /* Block until cmd_handler sends a command */
+            xTaskNotifyWait(0, 0, &notification_value, portMAX_DELAY);
+            cmd = (uart_command_t *)notification_value;
+
+            switch (current_state) {
+
+            /* ----------------------------------------------------------
+             *  RTC SUB-MENU: Choose time/date config or report toggle
+             * ---------------------------------------------------------- */
+            case STATE_RTC_MENU:
+                if (cmd->length == 1) {
+                    int choice = cmd->payload[0] - '0';
+                    switch (choice) {
+                    case 0:  /* Configure time */
+                        current_state = STATE_RTC_TIME_CONFIG;
+                        xQueueSend(queue_print, &msg_enter_hour, portMAX_DELAY);
+                        break;
+                    case 1:  /* Configure date */
+                        current_state = STATE_RTC_DATE_CONFIG;
+                        xQueueSend(queue_print, &msg_enter_day, portMAX_DELAY);
+                        break;
+                    case 2:  /* Toggle reporting */
+                        current_state = STATE_RTC_REPORT;
+                        xQueueSend(queue_print, &msg_report_prompt, portMAX_DELAY);
+                        break;
+                    case 3:  /* Exit to main menu */
+                        current_state = STATE_MAIN_MENU;
+                        break;
+                    default: /* Unknown option */
+                        current_state = STATE_MAIN_MENU;
+                        xQueueSend(queue_print, &MSG_INVALID, portMAX_DELAY);
+                        break;
+                    }
+                } else {
+                    /* Multi-char input invalid at RTC menu level */
+                    current_state = STATE_MAIN_MENU;
+                    xQueueSend(queue_print, &MSG_INVALID, portMAX_DELAY);
+                }
+                break;
+
+            /* ----------------------------------------------------------
+             *  TIME CONFIG: Collect hours -> minutes -> seconds -> AM/PM
+             * ---------------------------------------------------------- */
+            case STATE_RTC_TIME_CONFIG:
+                switch (rtc_sub_step) {
+                case RTC_TIME_STEP_HOUR:
+                    new_time.Hours = ascii_to_number(cmd->payload, cmd->length);
+                    rtc_sub_step = RTC_TIME_STEP_MINUTE;
+                    xQueueSend(queue_print, &msg_enter_minute, portMAX_DELAY);
+                    break;
+
+                case RTC_TIME_STEP_MINUTE:
+                    new_time.Minutes = ascii_to_number(cmd->payload, cmd->length);
+                    rtc_sub_step = RTC_TIME_STEP_SECOND;
+                    xQueueSend(queue_print, &msg_enter_second, portMAX_DELAY);
+                    break;
+
+                case RTC_TIME_STEP_SECOND:
+                    new_time.Seconds = ascii_to_number(cmd->payload, cmd->length);
+                    rtc_sub_step = RTC_TIME_STEP_AMPM;
+                    xQueueSend(queue_print, &msg_enter_ampm, portMAX_DELAY);
+                    break;
+
+                case RTC_TIME_STEP_AMPM: {
+                    /* User enters 0 for AM, 1 for PM */
+                    uint8_t ampm_val = ascii_to_number(cmd->payload, cmd->length);
+
+                    if (ampm_val == 0) {
+                        new_time.TimeFormat = RTC_HOURFORMAT12_AM;
+                    } else if (ampm_val == 1) {
+                        new_time.TimeFormat = RTC_HOURFORMAT12_PM;
+                    } else {
+                        /* Invalid AM/PM value -- reject everything */
+                        xQueueSend(queue_print, &MSG_INVALID, portMAX_DELAY);
+                        current_state = STATE_MAIN_MENU;
+                        rtc_sub_step = 0;
+                        break;
+                    }
+
+                    /* Validate all time fields, then apply or reject */
+                    if (rtc_validate(&new_time, NULL) == 0) {
+                        rtc_apply_time(&new_time);
+                        xQueueSend(queue_print, &msg_success, portMAX_DELAY);
+                        rtc_show_on_uart();
+                    } else {
+                        xQueueSend(queue_print, &MSG_INVALID, portMAX_DELAY);
+                    }
+
+                    /* Reset sub-step and return to main menu */
+                    current_state = STATE_MAIN_MENU;
+                    rtc_sub_step = 0;
+                    break;
+                }
+
+                default:
+                    break;
+                }
+                break;
+
+            /* ----------------------------------------------------------
+             *  DATE CONFIG: Collect day -> month -> weekday -> year
+             * ---------------------------------------------------------- */
+            case STATE_RTC_DATE_CONFIG:
+                switch (rtc_sub_step) {
+                case RTC_DATE_STEP_DAY:
+                    new_date.Date = ascii_to_number(cmd->payload, cmd->length);
+                    rtc_sub_step = RTC_DATE_STEP_MONTH;
+                    xQueueSend(queue_print, &msg_enter_month, portMAX_DELAY);
+                    break;
+
+                case RTC_DATE_STEP_MONTH:
+                    new_date.Month = ascii_to_number(cmd->payload, cmd->length);
+                    rtc_sub_step = RTC_DATE_STEP_WEEKDAY;
+                    xQueueSend(queue_print, &msg_enter_weekday, portMAX_DELAY);
+                    break;
+
+                case RTC_DATE_STEP_WEEKDAY:
+                    new_date.WeekDay = ascii_to_number(cmd->payload, cmd->length);
+                    rtc_sub_step = RTC_DATE_STEP_YEAR;
+                    xQueueSend(queue_print, &msg_enter_year, portMAX_DELAY);
+                    break;
+
+                case RTC_DATE_STEP_YEAR:
+                    new_date.Year = ascii_to_number(cmd->payload, cmd->length);
+
+                    /* Validate all four fields, then apply or reject */
+                    if (rtc_validate(NULL, &new_date) == 0) {
+                        rtc_apply_date(&new_date);
+                        xQueueSend(queue_print, &msg_success, portMAX_DELAY);
+                        rtc_show_on_uart();
+                    } else {
+                        xQueueSend(queue_print, &MSG_INVALID, portMAX_DELAY);
+                    }
+
+                    /* Reset sub-step and return to main menu */
+                    current_state = STATE_MAIN_MENU;
+                    rtc_sub_step = 0;
+                    break;
+
+                default:
+                    break;
+                }
+                break;
+
+            /* ----------------------------------------------------------
+             *  REPORT TOGGLE: 'y' starts periodic ITM output, 'n' stops
+             * ---------------------------------------------------------- */
+            case STATE_RTC_REPORT:
+                if (cmd->length == 1) {
+                    if (cmd->payload[0] == 'y') {
+                        /* Start the report timer if not already running */
+                        if (xTimerIsTimerActive(timer_rtc_report) == pdFALSE) {
+                            xTimerStart(timer_rtc_report, portMAX_DELAY);
+                        }
+                    } else if (cmd->payload[0] == 'n') {
+                        /* Stop the report timer */
+                        xTimerStop(timer_rtc_report, portMAX_DELAY);
+                    } else {
+                        xQueueSend(queue_print, &MSG_INVALID, portMAX_DELAY);
+                    }
+                } else {
+                    xQueueSend(queue_print, &MSG_INVALID, portMAX_DELAY);
+                }
+                current_state = STATE_MAIN_MENU;
+                break;
+
+            default:
+                /* Unknown state -- break out to avoid infinite loop */
+                break;
+
+            } /* end switch(current_state) */
+
+        } /* end while(current_state != STATE_MAIN_MENU) */
+
+        /* Hand control back to the main menu task */
+        xTaskNotify(task_handle_menu, 0, eNoAction);
+    }
+}
+
+/**
+ * @brief  UART print task.
+ *
+ *         Blocks on queue_print waiting for string pointers.  When a pointer
+ *         arrives it transmits the entire string over USART2 using blocking
+ *         HAL_UART_Transmit.
+ *
+ * @param  param  (unused)
+ */
+static void task_print(void *param)
+{
+    (void)param;
+    uint32_t *msg;
+
+    for (;;) {
+        /* Wait indefinitely for a string pointer from any task */
+        xQueueReceive(queue_print, &msg, portMAX_DELAY);
+
+        /* Transmit the null-terminated string over UART (blocking) */
+        HAL_UART_Transmit(&huart2,
+                          (uint8_t *)msg,
+                          strlen((char *)msg),
+                          HAL_MAX_DELAY);
+    }
+}
+
+/**
+ * @brief  Command handler task.
+ *
+ *         Woken by the UART ISR when '\n' is received.  Drains the raw
+ *         byte queue (queue_uart_rx) into a uart_command_t struct, then
+ *         routes it to the correct task based on current_state.
+ *
+ *         The command struct pointer is passed as the notification value
+ *         so the receiving task can read the payload directly.
+ *
+ * @param  param  (unused)
+ */
+static void task_cmd_handler(void *param)
+{
+    (void)param;
+
+    BaseType_t     notify_result;
+    uart_command_t cmd;                      /* Reused each iteration         */
+
+    for (;;) {
+        /* Block until the UART ISR signals that '\n' was received */
+        notify_result = xTaskNotifyWait(0, 0, NULL, portMAX_DELAY);
+
+        if (notify_result != pdTRUE) {
+            continue;              /* Spurious wake -- go back to sleep       */
+        }
+
+        /* Verify that bytes are actually waiting in the queue */
+        if (uxQueueMessagesWaiting(queue_uart_rx) == 0) {
+            continue;              /* Empty queue -- nothing to parse         */
+        }
+
+        /* Drain bytes from the queue until we hit the newline delimiter */
+        uint8_t    byte;
+        uint8_t    index = 0;
+        BaseType_t status;
+
+        do {
+            status = xQueueReceive(queue_uart_rx, &byte, 0);
+            if (status == pdTRUE) {
+                cmd.payload[index++] = byte;
+            }
+        } while (byte != '\n' && index < sizeof(cmd.payload));
+
+        /* Replace trailing '\n' with null terminator */
+        cmd.payload[index - 1] = '\0';
+        cmd.length = index - 1;   /* Length excludes the null terminator     */
+
+        /* Route the command to whichever task is currently active */
+        switch (current_state) {
+
+        case STATE_MAIN_MENU:
+            xTaskNotify(task_handle_menu,
+                        (uint32_t)&cmd,
+                        eSetValueWithOverwrite);
+            break;
+
+        case STATE_LED_EFFECT:
+            xTaskNotify(task_handle_led,
+                        (uint32_t)&cmd,
+                        eSetValueWithOverwrite);
+            break;
+
+        case STATE_RTC_MENU:       /* All RTC sub-states route to rtc task   */
+        case STATE_RTC_TIME_CONFIG:
+        case STATE_RTC_DATE_CONFIG:
+        case STATE_RTC_REPORT:
+            xTaskNotify(task_handle_rtc,
+                        (uint32_t)&cmd,
+                        eSetValueWithOverwrite);
+            break;
+        }
+    }
+}
+
+/* USER CODE END 0 */
+
+/**
+ * @brief  Application entry point.
+ *         Initialises hardware, creates all FreeRTOS objects, and starts
+ *         the scheduler.  This function never returns.
+ * @retval int (never reached)
+ */
+int main(void)
+{
+    /* USER CODE BEGIN 1 */
+    /* USER CODE END 1 */
+
+    /* MCU Configuration ------------------------------------------------------ */
+    HAL_Init();                    /* Reset peripherals, init Flash & SysTick  */
+
+    /* USER CODE BEGIN Init */
+    /* USER CODE END Init */
+
+    SystemClock_Config();          /* Configure system clock to 168 MHz        */
+
+    /* USER CODE BEGIN SysInit */
+    /* USER CODE END SysInit */
+
+    /* Initialise all configured peripherals */
+    MX_GPIO_Init();                /* LEDs on PD12-PD15, user button, etc.    */
+    MX_RTC_Init();                 /* Real-time clock in 12-hour mode         */
+    MX_USART2_UART_Init();        /* UART2 at 115200 baud, 8N1               */
+
+    /* USER CODE BEGIN 2 */
+    BaseType_t status;
+
+    /* ----- Create FreeRTOS tasks ----------------------------------------- */
+    /*  xTaskCreate( function,      name,         stack, param, prio, handle )
+     *               |              |             |words  |      |     |
+     *           entry point    debug label    RAM alloc  arg  level  ID     */
+
+    status = xTaskCreate(task_main_menu,   "menu_task",  250, NULL, 2,
+                         &task_handle_menu);
+    configASSERT(status == pdPASS);        /* Halt if creation failed         */
+
+    status = xTaskCreate(task_cmd_handler, "cmd_task",   250, NULL, 2,
+                         &task_handle_cmd);
+    configASSERT(status == pdPASS);
+
+    status = xTaskCreate(task_print,       "print_task", 250, NULL, 2,
+                         &task_handle_print);
+    configASSERT(status == pdPASS);
+
+    status = xTaskCreate(task_led_effect,  "led_task",   250, NULL, 2,
+                         &task_handle_led);
+    configASSERT(status == pdPASS);
+
+    status = xTaskCreate(task_rtc_config,  "rtc_task",   250, NULL, 2,
+                         &task_handle_rtc);
+    configASSERT(status == pdPASS);
+
+    /* ----- Create queues ------------------------------------------------- */
+
+    /* Raw byte queue: UART ISR enqueues one char at a time (max 10 bytes)   */
+    queue_uart_rx = xQueueCreate(10, sizeof(char));
+    configASSERT(queue_uart_rx != NULL);
+
+    /* Print queue: tasks enqueue pointers to null-terminated strings        */
+    queue_print = xQueueCreate(10, sizeof(size_t));
+    configASSERT(queue_print != NULL);
+
+    /* ----- Create software timers ---------------------------------------- */
+
+    /* Four LED effect timers -- each fires every 500 ms, auto-reload.
+     * Timer ID (1-4) tells the callback which blink pattern to use.         */
+    for (int i = 0; i < LED_COUNT; i++) {
+        timer_led[i] = xTimerCreate(
+            "led_timer",                      /* Debug name                   */
+            pdMS_TO_TICKS(500),               /* Period: 500 ms               */
+            pdTRUE,                           /* Auto-reload (repeating)      */
+            (void *)(i + 1),                  /* Timer ID = effect number 1-4 */
+            callback_led_effect);             /* Callback function            */
+    }
+
+    /* RTC report timer -- fires every 1000 ms, prints time via ITM.         */
+    timer_rtc_report = xTimerCreate(
+        "rtc_report",                         /* Debug name                   */
+        pdMS_TO_TICKS(1000),                  /* Period: 1 second             */
+        pdTRUE,                               /* Auto-reload (repeating)      */
+        NULL,                                 /* Timer ID: not needed         */
+        callback_rtc_report);                 /* Callback function            */
+
+    /* ----- Start UART receive interrupt ---------------------------------- */
+    /* Receive one byte at a time; the ISR callback re-arms itself.          */
+    HAL_UART_Receive_IT(&huart2, (uint8_t *)&uart_rx_byte, 1);
+
+    /* ----- Launch the FreeRTOS scheduler --------------------------------- */
+    /* This call never returns if everything is configured correctly.         */
+    vTaskStartScheduler();
+
+    /* USER CODE END 2 */
+
+    /* Should never reach here -- scheduler has taken over */
+    /* USER CODE BEGIN WHILE */
+    while (1) {
+        /* USER CODE END WHILE */
+        /* USER CODE BEGIN 3 */
+    }
+    /* USER CODE END 3 */
+}
+
+/* =========================================================================
+ *  SYSTEM CLOCK CONFIGURATION
+ *  CubeMX generated -- 168 MHz SYSCLK via PLL from 16 MHz HSI
+ * ========================================================================= */
+void SystemClock_Config(void)
+{
+    RCC_OscInitTypeDef RCC_OscInitStruct = {0};
+    RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
+
+    /* Enable the power controller clock and set voltage scaling */
+    __HAL_RCC_PWR_CLK_ENABLE();
+    __HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE1);
+
+    /* HSI = 16 MHz internal RC, LSI for RTC, PLL output = 168 MHz */
+    RCC_OscInitStruct.OscillatorType      = RCC_OSCILLATORTYPE_HSI
+                                          | RCC_OSCILLATORTYPE_LSI;
+    RCC_OscInitStruct.HSIState            = RCC_HSI_ON;
+    RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
+    RCC_OscInitStruct.LSIState            = RCC_LSI_ON;
+    RCC_OscInitStruct.PLL.PLLState        = RCC_PLL_ON;
+    RCC_OscInitStruct.PLL.PLLSource       = RCC_PLLSOURCE_HSI;
+    RCC_OscInitStruct.PLL.PLLM            = 8;   /* VCO in  = 16/8  = 2 MHz */
+    RCC_OscInitStruct.PLL.PLLN            = 168;  /* VCO out = 2*168 = 336   */
+    RCC_OscInitStruct.PLL.PLLP            = RCC_PLLP_DIV2; /* SYSCLK = 168  */
+    RCC_OscInitStruct.PLL.PLLQ            = 7;   /* USB clk = 336/7 = 48    */
+
+    if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK) {
+        Error_Handler();
+    }
+
+    /* Bus clocks: AHB = 168 MHz, APB1 = 42 MHz, APB2 = 84 MHz */
+    RCC_ClkInitStruct.ClockType      = RCC_CLOCKTYPE_HCLK
+                                     | RCC_CLOCKTYPE_SYSCLK
+                                     | RCC_CLOCKTYPE_PCLK1
+                                     | RCC_CLOCKTYPE_PCLK2;
+    RCC_ClkInitStruct.SYSCLKSource   = RCC_SYSCLKSOURCE_PLLCLK;
+    RCC_ClkInitStruct.AHBCLKDivider  = RCC_SYSCLK_DIV1;
+    RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV4;
+    RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV2;
+
+    if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_5) != HAL_OK) {
+        Error_Handler();
+    }
+}
+
+/* =========================================================================
+ *  RTC INITIALISATION
+ *  CubeMX generated -- 12-hour format, LSI clock source
+ * ========================================================================= */
+static void MX_RTC_Init(void)
+{
+    hrtc.Instance            = RTC;
+    hrtc.Init.HourFormat     = RTC_HOURFORMAT_12;
+    hrtc.Init.AsynchPrediv   = 127;       /* Async prescaler                 */
+    hrtc.Init.SynchPrediv    = 255;       /* Sync prescaler                  */
+    hrtc.Init.OutPut         = RTC_OUTPUT_DISABLE;
+    hrtc.Init.OutPutPolarity = RTC_OUTPUT_POLARITY_HIGH;
+    hrtc.Init.OutPutType     = RTC_OUTPUT_TYPE_OPENDRAIN;
+
+    if (HAL_RTC_Init(&hrtc) != HAL_OK) {
+        Error_Handler();
+    }
+}
+
+/* =========================================================================
+ *  USART2 INITIALISATION
+ *  CubeMX generated -- 115200 baud, 8 data bits, no parity, 1 stop bit
+ * ========================================================================= */
+static void MX_USART2_UART_Init(void)
+{
+    huart2.Instance          = USART2;
+    huart2.Init.BaudRate     = 115200;
+    huart2.Init.WordLength   = UART_WORDLENGTH_8B;
+    huart2.Init.StopBits     = UART_STOPBITS_1;
+    huart2.Init.Parity       = UART_PARITY_NONE;
+    huart2.Init.Mode         = UART_MODE_TX_RX;
+    huart2.Init.HwFlowCtl    = UART_HWCONTROL_NONE;
+    huart2.Init.OverSampling = UART_OVERSAMPLING_16;
+
+    if (HAL_UART_Init(&huart2) != HAL_OK) {
+        Error_Handler();
+    }
+}
+
+/* =========================================================================
+ *  GPIO INITIALISATION
+ *  CubeMX generated
+ *  Key pins:
+ *    PD12 = LD4 (green)   PD13 = LD3 (orange)
+ *    PD14 = LD5 (red)     PD15 = LD6 (blue)
+ *    PA0  = B1  (user button, rising edge interrupt)
+ * ========================================================================= */
+static void MX_GPIO_Init(void)
+{
+    GPIO_InitTypeDef GPIO_InitStruct = {0};
+
+    /* Enable GPIO port clocks */
+    __HAL_RCC_GPIOE_CLK_ENABLE();
+    __HAL_RCC_GPIOC_CLK_ENABLE();
+    __HAL_RCC_GPIOH_CLK_ENABLE();
+    __HAL_RCC_GPIOA_CLK_ENABLE();
+    __HAL_RCC_GPIOB_CLK_ENABLE();
+    __HAL_RCC_GPIOD_CLK_ENABLE();
+
+    /* Set initial output levels before configuring pins */
+    HAL_GPIO_WritePin(CS_I2C_SPI_GPIO_Port, CS_I2C_SPI_Pin, GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(OTG_FS_PowerSwitchOn_GPIO_Port,
+                      OTG_FS_PowerSwitchOn_Pin, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(GPIOD,
+                      LD4_Pin | LD3_Pin | LD5_Pin | GPIO_PIN_15 | Audio_RST_Pin,
+                      GPIO_PIN_RESET);
+
+    /* CS_I2C_SPI -- push-pull output */
+    GPIO_InitStruct.Pin   = CS_I2C_SPI_Pin;
+    GPIO_InitStruct.Mode  = GPIO_MODE_OUTPUT_PP;
+    GPIO_InitStruct.Pull  = GPIO_NOPULL;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+    HAL_GPIO_Init(CS_I2C_SPI_GPIO_Port, &GPIO_InitStruct);
+
+    /* OTG_FS power switch -- push-pull output */
+    GPIO_InitStruct.Pin   = OTG_FS_PowerSwitchOn_Pin;
+    GPIO_InitStruct.Mode  = GPIO_MODE_OUTPUT_PP;
+    GPIO_InitStruct.Pull  = GPIO_NOPULL;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+    HAL_GPIO_Init(OTG_FS_PowerSwitchOn_GPIO_Port, &GPIO_InitStruct);
+
+    /* PDM_OUT -- alternate function (SPI2) */
+    GPIO_InitStruct.Pin       = PDM_OUT_Pin;
+    GPIO_InitStruct.Mode      = GPIO_MODE_AF_PP;
+    GPIO_InitStruct.Pull      = GPIO_NOPULL;
+    GPIO_InitStruct.Speed     = GPIO_SPEED_FREQ_LOW;
+    GPIO_InitStruct.Alternate = GPIO_AF5_SPI2;
+    HAL_GPIO_Init(PDM_OUT_GPIO_Port, &GPIO_InitStruct);
+
+    /* User button B1 -- external interrupt on rising edge */
+    GPIO_InitStruct.Pin  = B1_Pin;
+    GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
+    GPIO_InitStruct.Pull = GPIO_NOPULL;
+    HAL_GPIO_Init(B1_GPIO_Port, &GPIO_InitStruct);
+
+    /* I2S3_WS -- alternate function (SPI3) */
+    GPIO_InitStruct.Pin       = I2S3_WS_Pin;
+    GPIO_InitStruct.Mode      = GPIO_MODE_AF_PP;
+    GPIO_InitStruct.Pull      = GPIO_NOPULL;
+    GPIO_InitStruct.Speed     = GPIO_SPEED_FREQ_LOW;
+    GPIO_InitStruct.Alternate = GPIO_AF6_SPI3;
+    HAL_GPIO_Init(I2S3_WS_GPIO_Port, &GPIO_InitStruct);
+
+    /* SPI1 pins -- SCK, MISO, MOSI */
+    GPIO_InitStruct.Pin       = SPI1_SCK_Pin | SPI1_MISO_Pin | SPI1_MOSI_Pin;
+    GPIO_InitStruct.Mode      = GPIO_MODE_AF_PP;
+    GPIO_InitStruct.Pull      = GPIO_NOPULL;
+    GPIO_InitStruct.Speed     = GPIO_SPEED_FREQ_LOW;
+    GPIO_InitStruct.Alternate = GPIO_AF5_SPI1;
+    HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
+    /* BOOT1 -- input */
+    GPIO_InitStruct.Pin  = BOOT1_Pin;
+    GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+    GPIO_InitStruct.Pull = GPIO_NOPULL;
+    HAL_GPIO_Init(BOOT1_GPIO_Port, &GPIO_InitStruct);
+
+    /* CLK_IN -- alternate function (SPI2) */
+    GPIO_InitStruct.Pin       = CLK_IN_Pin;
+    GPIO_InitStruct.Mode      = GPIO_MODE_AF_PP;
+    GPIO_InitStruct.Pull      = GPIO_NOPULL;
+    GPIO_InitStruct.Speed     = GPIO_SPEED_FREQ_LOW;
+    GPIO_InitStruct.Alternate = GPIO_AF5_SPI2;
+    HAL_GPIO_Init(CLK_IN_GPIO_Port, &GPIO_InitStruct);
+
+    /* LEDs (PD12-PD15) and Audio_RST -- push-pull outputs */
+    GPIO_InitStruct.Pin   = LD4_Pin | LD3_Pin | LD5_Pin
+                          | GPIO_PIN_15 | Audio_RST_Pin;
+    GPIO_InitStruct.Mode  = GPIO_MODE_OUTPUT_PP;
+    GPIO_InitStruct.Pull  = GPIO_NOPULL;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+    HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
+
+    /* I2S3 pins -- MCK, SCK, SD */
+    GPIO_InitStruct.Pin       = I2S3_MCK_Pin | I2S3_SCK_Pin | I2S3_SD_Pin;
+    GPIO_InitStruct.Mode      = GPIO_MODE_AF_PP;
+    GPIO_InitStruct.Pull      = GPIO_NOPULL;
+    GPIO_InitStruct.Speed     = GPIO_SPEED_FREQ_LOW;
+    GPIO_InitStruct.Alternate = GPIO_AF6_SPI3;
+    HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
+
+    /* VBUS_FS -- input */
+    GPIO_InitStruct.Pin  = VBUS_FS_Pin;
+    GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+    GPIO_InitStruct.Pull = GPIO_NOPULL;
+    HAL_GPIO_Init(VBUS_FS_GPIO_Port, &GPIO_InitStruct);
+
+    /* OTG_FS pins -- ID, DM, DP */
+    GPIO_InitStruct.Pin       = OTG_FS_ID_Pin | OTG_FS_DM_Pin | OTG_FS_DP_Pin;
+    GPIO_InitStruct.Mode      = GPIO_MODE_AF_PP;
+    GPIO_InitStruct.Pull      = GPIO_NOPULL;
+    GPIO_InitStruct.Speed     = GPIO_SPEED_FREQ_LOW;
+    GPIO_InitStruct.Alternate = GPIO_AF10_OTG_FS;
+    HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
+    /* OTG_FS over-current detection -- input */
+    GPIO_InitStruct.Pin  = OTG_FS_OverCurrent_Pin;
+    GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+    GPIO_InitStruct.Pull = GPIO_NOPULL;
+    HAL_GPIO_Init(OTG_FS_OverCurrent_GPIO_Port, &GPIO_InitStruct);
+
+    /* Audio I2C -- open-drain alternate function (I2C1) */
+    GPIO_InitStruct.Pin       = Audio_SCL_Pin | Audio_SDA_Pin;
+    GPIO_InitStruct.Mode      = GPIO_MODE_AF_OD;
+    GPIO_InitStruct.Pull      = GPIO_NOPULL;
+    GPIO_InitStruct.Speed     = GPIO_SPEED_FREQ_LOW;
+    GPIO_InitStruct.Alternate = GPIO_AF4_I2C1;
+    HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+
+    /* MEMS_INT2 -- event on rising edge */
+    GPIO_InitStruct.Pin  = MEMS_INT2_Pin;
+    GPIO_InitStruct.Mode = GPIO_MODE_EVT_RISING;
+    GPIO_InitStruct.Pull = GPIO_NOPULL;
+    HAL_GPIO_Init(MEMS_INT2_GPIO_Port, &GPIO_InitStruct);
+}
+
+/* USER CODE BEGIN 4 */
+
+/* =========================================================================
+ *  UART RECEIVE COMPLETE CALLBACK (runs in ISR context)
+ *
+ *  Called by the HAL each time one byte arrives on USART2.
+ *  The byte is pushed into queue_uart_rx.  When '\n' is received,
+ *  task_cmd_handler is notified to parse the complete line.
+ *
+ *  A short software delay provides basic debounce for noisy connections.
+ * ========================================================================= */
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+{
+    (void)huart;
+    uint8_t discard;
+
+    /* Brief software delay for debounce (~24 us at 168 MHz) */
+    for (volatile uint32_t i = 0; i < 4000; i++);
+
+    if (!xQueueIsQueueFullFromISR(queue_uart_rx)) {
+        /* Normal case: enqueue the received byte */
+        xQueueSendFromISR(queue_uart_rx, (void *)&uart_rx_byte, NULL);
+    } else {
+        /* Queue full: drop the oldest byte to make room, ensuring the
+         * final '\n' delimiter is never lost */
+        xQueueReceiveFromISR(queue_uart_rx, (void *)&discard, NULL);
+        xQueueSendFromISR(queue_uart_rx, (void *)&uart_rx_byte, NULL);
+    }
+
+    /* If this byte is the newline delimiter, wake cmd_handler_task */
+    if (uart_rx_byte == '\n') {
+        xTaskNotifyFromISR(task_handle_cmd, 0, eNoAction, NULL);
+    }
+
+    /* Re-arm the UART to receive the next single byte via interrupt */
+    HAL_UART_Receive_IT(&huart2, (uint8_t *)&uart_rx_byte, 1);
+}
+
+/* USER CODE END 4 */
+
+/**
+ * @brief  TIM6 period elapsed callback -- drives HAL_IncTick().
+ *         FreeRTOS owns SysTick, so HAL timebase uses TIM6 instead.
+ * @param  htim  TIM handle.
+ */
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
+{
+    if (htim->Instance == TIM6) {
+        HAL_IncTick();             /* Increment HAL millisecond counter       */
+    }
+}
+
+/**
+ * @brief  Global error handler -- disables interrupts and halts.
+ *         Attach a debugger to diagnose the fault.
+ */
+void Error_Handler(void)
+{
+    __disable_irq();               /* Prevent further interrupts              */
+    while (1);                     /* Halt forever                            */
+}
+
+#ifdef USE_FULL_ASSERT
+/**
+ * @brief  Reports the source file and line where assert_param failed.
+ * @param  file  Source file name string.
+ * @param  line  Line number in the source file.
+ */
+void assert_failed(uint8_t *file, uint32_t line)
+{
+    /* Optional: printf("Assert failed: %s line %lu\r\n", file, line); */
+}
+#endif /* USE_FULL_ASSERT */
